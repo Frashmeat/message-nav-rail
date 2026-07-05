@@ -1,0 +1,13 @@
+{
+  "name": "message-nav-rail",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0"
+  }
+}

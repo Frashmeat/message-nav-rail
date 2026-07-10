@@ -4,7 +4,7 @@
 
 **Goal:** 实现一个 Oh My Pi 扩展，在输入框上方渲染横向消息导航小点条，用快捷键选中并预览消息。
 
-**当前状态（2026-07-09 核对）：** 公开渠道和本地依赖中未找到可直接引用的 Oh My Pi 官方扩展文档；已用本地 Oh My Pi 源码和运行探针核对基础 API。当前项目以 `types/pi-coding-agent.d.ts` 作为本地类型存根，并在运行时兼容两类已出现事件 payload：`event.message.role/content` 与 `event.role/text/content/messageId`。
+**当前状态（2026-07-10 核对）：** 已用本地 Oh My Pi `16.3.15` 维护源码核对扩展 API。当前项目以 `types/pi-coding-agent.d.ts` 保存实际使用的宿主类型子集，并在运行时兼容两类已出现事件 payload：`event.message.role/content` 与 `event.role/text/content/messageId`。
 
 **Architecture:** 纯 TypeScript 扩展模块，入口为 `message-nav-rail.ts`，通过 `ExtensionAPI` 注册事件处理器（触发刷新/临时显示）、快捷键（移动选中/可选跳转）、`ctx.ui.setWidget`（渲染小点条）。消息列表以 `sessionManager.getBranch()` 为权威来源；跳转优先走能力检测后的 `ctx.ui.scrollToEntryId`，缺失时静默降级。
 
@@ -41,7 +41,7 @@ F:\WebCode\message-nav-rail\
 - `renderer.ts`：RailMessage[] + selectedIndex + width → string[]，纯函数，无副作用。
 - `state.ts`：RailState 的操作（move, clamp, rebuild），纯函数。
 - `shortcuts.ts`：快捷键 → 状态操作 + notify，依赖 ctx。
-- `index.ts`：组装，注册到 pi；兼容多种事件 payload；优先使用 `ctx.ui.scrollToEntryId`，缺失时才尝试 legacy `navigateTree`。
+- `index.ts`：组装，注册到 pi；兼容多种事件 payload；存在 `ctx.ui.scrollToEntryId` 时滚动消息视图，缺失时静默降级。
 
 ## 当前命令
 
@@ -55,16 +55,16 @@ npm run build
 
 ## 当前 API 核对结论
 
-- `setLabel`、`pi.on(event, handler(event, ctx))`、`registerShortcut(shortcut, options)`：已由 `omp/16.3.8` 探针确认存在。
-- `ctx.ui.setWidget(key, content, options)`、`ctx.ui.notify`：已由 `omp/16.3.8` 探针确认 `ctx.ui` 中存在。
+- `setLabel`、`pi.on(event, handler(event, ctx))`、`registerShortcut(shortcut, options)`：已结合 `16.3.15` 维护源码确认。
+- `ctx.ui.setWidget(key, content, options)`、`ctx.ui.notify`：已结合 `16.3.15` 维护源码确认。
 - `ctx.sessionManager.getBranch()`：当前扩展用它作为权威消息来源；`session_start`、消息事件后刷新 branch，解决 `/resume` 和真实 `entry.id` 锚定问题。
 - `ctx.sessionManager.onEntryAppended(handler)`：本地源码核对后确认不应作为扩展 API 使用。它是 `SessionManager` 内部单回调属性，不是稳定订阅接口，扩展已移除依赖。
 - `ctx.ui.scrollToEntryId(id)`：需要本地 Oh My Pi 补丁暴露；存在时快捷键跳转到真实 entry，不存在时只移动选中。
 - `ctx.ui.onTerminalInput(handler)`：存在时用于 Alt+方向键 raw input 兜底，解决终端 escape sequence 或 key id 别名差异导致快捷键不触发的问题。
-- `ctx.navigateTree(id)`：只作为 legacy 降级路径，不作为主跳转方案，避免改变会话状态。
+- `ctx.navigateTree(id)`：只属于命令上下文，不在消息事件的 `ExtensionContext` 中使用。
 - `ctx.ui.setFooter(...)`：不再使用。当前扩展只以 `setWidget(..., { placement: "aboveEditor" })` 渲染小白点，避免绑定 Oh My Pi 后续 footer 语义。
 - `message_start`、`message_end`：`omp -p` 实测 payload 为 `event.message.role/content`；当前实现同时兼容旧计划中出现过的 `event.role/text/content/messageId`。
-- `message_update`：本次由于模型服务网络连接失败未触发到有效流式内容，仍按兼容解析处理。
+- `message_update`：已通过回归测试确认 branch 定时刷新不会清除尚未持久化的流式消息。
 
 ## 当前已知限制
 

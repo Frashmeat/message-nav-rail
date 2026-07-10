@@ -24,18 +24,13 @@ import { PREVIEW_LEN, truncate } from "./util";
 
 const DEFAULT_WIDTH = 80;
 
-interface NavigableContext extends ExtensionContext {
-  navigateTree(id: string, opts?: { summarize?: boolean }): Promise<unknown>;
-}
-
 interface ScrollToEntryCapableUI {
   scrollToEntryId?: (
     entryId: string,
     options?: {
       align?: "start" | "center" | "end" | "nearest";
-      highlight?: boolean;
     }
-  ) => boolean | Promise<boolean>;
+  ) => boolean;
 }
 
 interface TerminalInputCapableUI {
@@ -117,28 +112,20 @@ function eventContentText(event: unknown): string {
   return typeof content === "string" ? content : extractContentText(content);
 }
 
-function hasNavigateTree(ctx: ExtensionContext): ctx is NavigableContext {
-  return "navigateTree" in ctx && typeof ctx.navigateTree === "function";
-}
-
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
-}
-
 export default function messageNavRail(pi: ExtensionAPI) {
   pi.setLabel("消息导航栏");
 
   let state: RailState = { ...INITIAL_STATE };
-  const width = DEFAULT_WIDTH;
   let currentCtx: ExtensionContext | null = null;
   let terminalInputCtx: ExtensionContext | null = null;
   let unsubscribeTerminalInput: (() => void) | undefined;
   const seenEntryIds = new Set<string>();
   const refreshTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  function currentWidth(): number {
+    const columns = process.stdout.columns;
+    return Number.isFinite(columns) && columns > 0 ? columns : DEFAULT_WIDTH;
+  }
 
   function rememberMessages(messages: RailMessage[]) {
     for (const message of messages) {
@@ -148,7 +135,11 @@ export default function messageNavRail(pi: ExtensionAPI) {
 
   function rerender() {
     try {
-      const lines = renderRail(state.messages, state.selectedIndex, width);
+      const lines = renderRail(
+        state.messages,
+        state.selectedIndex,
+        currentWidth()
+      );
       currentCtx?.ui.setWidget("message-nav-rail", lines, { placement: "aboveEditor" });
     } catch (e) {
       pi.logger?.error("message-nav-rail rerender failed", e);
@@ -202,7 +193,22 @@ export default function messageNavRail(pi: ExtensionAPI) {
     const previousSelected = state.selectedIndex >= 0 ? state.messages[state.selectedIndex] : undefined;
     const previousSelectedId = previousSelected?.id;
     const previousSelectedIndex = state.selectedIndex;
-    const next = rebuildFromEntries(branch);
+    const previousStreaming = state.streamingAssistantId
+      ? state.messages.find((message) => message.id === state.streamingAssistantId)
+      : undefined;
+    const rebuilt = rebuildFromEntries(branch);
+    const addedMessages = rebuilt.messages.filter(
+      (message) => !previousIds.has(message.id)
+    );
+    const next =
+      previousStreaming &&
+      !rebuilt.messages.some((message) => message.id === previousStreaming.id)
+        ? {
+            ...rebuilt,
+            messages: [...rebuilt.messages, previousStreaming],
+            streamingAssistantId: previousStreaming.id,
+          }
+        : rebuilt;
 
     if (previousSelectedId) {
       const selectedIndex = next.messages.findIndex((m) => m.id === previousSelectedId);
@@ -221,12 +227,12 @@ export default function messageNavRail(pi: ExtensionAPI) {
     }
 
     seenEntryIds.clear();
-    rememberMessages(state.messages);
-    return state.messages.filter((message) => !previousIds.has(message.id));
+    rememberMessages(rebuilt.messages);
+    return addedMessages;
   }
 
   function replaceStateFromBranch(ctx: ExtensionContext): RailMessage[] {
-    return replaceStateFromEntries(ctx.sessionManager.getBranch?.() ?? []);
+    return replaceStateFromEntries(ctx.sessionManager.getBranch());
   }
 
   function refreshFromBranch(
@@ -234,7 +240,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
     shouldRender = true
   ): { refreshed: boolean; addedMessages: RailMessage[] } {
     try {
-      const branch = ctx.sessionManager.getBranch?.() ?? [];
+      const branch = ctx.sessionManager.getBranch();
       if (branch.length === 0) return { refreshed: false, addedMessages: [] };
       const addedMessages = replaceStateFromEntries(branch);
       if (shouldRender) rerender();
@@ -271,7 +277,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
   function makeShortcutCtx(): ShortcutContext {
     return {
       state,
-      width,
+      width: currentWidth(),
       notify: (m, l) => currentCtx?.ui.notify(m, l),
       setState,
       navigateTo: (idx) => navigateToMessage(idx),
@@ -283,7 +289,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
     if (!ctx) return false;
     let targetMessage = state.messages[idx];
     if (!targetMessage) return false;
-    if (ctx.sessionManager.getBranch && tryRefreshFromBranch(ctx, true)) {
+    if (tryRefreshFromBranch(ctx, true)) {
       const refreshedIndex = state.selectedIndex >= 0 ? state.selectedIndex : Math.min(idx, state.messages.length - 1);
       targetMessage = state.messages[refreshedIndex];
       if (!targetMessage) return false;
@@ -295,14 +301,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
       try {
         const result = scrollToEntryId.call(ctx.ui, targetMessage.id, {
           align: "center",
-          highlight: true,
         });
-        if (isPromiseLike(result)) {
-          void Promise.resolve(result).catch((e) =>
-            pi.logger?.error("scrollToEntryId failed", e)
-          );
-          return true;
-        }
         return result;
       } catch (e) {
         pi.logger?.error("scrollToEntryId failed", e);
@@ -310,15 +309,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
       }
     }
 
-    if (!hasNavigateTree(ctx)) return false;
-    const branch = ctx.sessionManager.getBranch?.() ?? [];
-    const msgEntries = branch.filter((e) => e.type === "message");
-    const target = msgEntries[idx];
-    if (!target) return false;
-    void ctx.navigateTree(target.id).catch((e) =>
-      pi.logger?.error("navigateTree failed", e)
-    );
-    return true;
+    return false;
   }
 
   pi.on("input", async (event, ctx) => {

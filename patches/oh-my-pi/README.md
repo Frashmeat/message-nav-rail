@@ -35,7 +35,7 @@ F:\WebCode\message-nav-rail\ohmypi\oh-my-pi
 当前已归档补丁：
 
 ```text
-patches/oh-my-pi/16.3.11-scroll-to-entry-and-fixed-composer.patch
+patches/oh-my-pi/16.3.15-scroll-to-entry-and-fixed-composer.patch
 ```
 
 扩展侧已经按能力检测适配：
@@ -61,9 +61,7 @@ patches/oh-my-pi/16.3.11-scroll-to-entry-and-fixed-composer.patch
 C:\Users\Administrator\.local\bin\omp.exe
 ```
 
-当前安装的二进制版本是 `omp/16.3.11`，干净维护工作树 `packages/coding-agent/package.json` 标注的 `@oh-my-pi/pi-coding-agent` 版本也是 `16.3.11`。生成 patch 文件和替换 `omp.exe` 时，以实际源码版本为准。
-
-源码已存在，但当前 shell 没有 `bun`，因此不能在本环境直接执行 Oh My Pi 的 `bun test` / `bun check`。
+当前维护工作树 `packages/coding-agent/package.json` 标注的 `@oh-my-pi/pi-coding-agent` 版本是 `16.3.15`。安装版本必须通过 `omp.exe --version` 实时确认；生成 patch 文件和替换 `omp.exe` 时，以实际源码版本为准。
 
 另外，旧工作树 `oh-my-pi` 的 Git 索引当前异常：`git status` 显示大量文件同时为 deleted/untracked，`git ls-files` 对已存在文件返回为空。不要基于该状态直接生成或提交 patch。
 
@@ -170,7 +168,8 @@ cd F:\WebCode\message-nav-rail
 - 如果某一步失败，停止并打印失败步骤、错误详情和下一步建议。
 - 如果发生冲突，停止并列出冲突文件，同时提示手动 `git status`、解决冲突、`git merge --continue`、再 push。
 - 如果没有冲突，自动执行 `git push origin HEAD:<当前分支>`。
-- 默认构建新的 `packages/coding-agent/dist/omp.exe`，部署到 `C:\Users\Administrator\.local\bin\omp.exe`，并重装当前扩展。
+- 默认先构建 `packages/natives/native/pi_natives.win32-x64-baseline.node`，再构建新的 `packages/coding-agent/dist/omp.exe`，部署到 `C:\Users\Administrator\.local\bin\omp.exe`，并重装当前扩展。
+- 显式传入 `-Repo` 时，验证、native 构建、二进制构建和部署都会使用同一个仓库，不会回退到默认维护目录。
 
 只想同步到本地、不自动推送时：
 
@@ -208,6 +207,18 @@ cd F:\WebCode\message-nav-rail
 ```
 
 注意：同步脚本默认会执行 Git 同步、push、构建和本机部署。如果某一步失败，脚本会停止并打印失败步骤、错误详情和建议命令。
+
+如果部署时报 native addon 缺少类似 `__piNativesV16_3_15` 的版本哨兵，说明 `omp.exe` 已更新，但本地 `.node` native 文件仍来自旧版本。处理方式是重新构建 native、重新构建 `omp.exe`、再部署：
+
+```powershell
+cd F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean
+$env:TARGET_VARIANT = "baseline"
+bun --cwd=packages/natives run build
+bun --cwd=packages/coding-agent run build
+
+cd F:\WebCode\message-nav-rail
+.\scripts\deploy-oh-my-pi-local.cmd
+```
 
 如果 native 构建报：
 
@@ -298,7 +309,6 @@ ExtensionContext
 sessionManager
 getBranch
 scrollToEntryId
-navigateTree
 Composer
 Input
 MessageViewport
@@ -318,7 +328,6 @@ scroll
 ```ts
 scrollToEntryId(entryId: string, options?: {
   align?: "start" | "center" | "end" | "nearest";
-  highlight?: boolean;
 }): boolean
 ```
 
@@ -371,8 +380,12 @@ git checkout -b local/message-nav-rail-patch
 完成源码修改并修复 Git checkout 状态后生成补丁：
 
 ```powershell
-$version = "16.3.11" # 改成当前 Oh My Pi 源码版本
-git diff -- . > "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
+$version = (Get-Content packages/coding-agent/package.json -Raw | ConvertFrom-Json).version
+$patchPath = "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
+$diffLines = @(git diff --binary upstream/main -- packages/coding-agent packages/tui)
+$diffText = [string]::Join("`n", [string[]]$diffLines) + "`n"
+[IO.File]::WriteAllText($patchPath, $diffText, [Text.UTF8Encoding]::new($false))
+git apply --check --reverse $patchPath
 ```
 
 如果当前 checkout 仍出现“大量 deleted/untracked”，不要执行上面的命令。应先重新 clone 干净源码，或修复 Git 索引后再生成。
@@ -381,7 +394,7 @@ git diff -- . > "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to
 
 ```powershell
 cd <oh-my-pi-source>
-$version = "16.3.11" # 改成当前 Oh My Pi 源码版本
+$version = "16.3.15" # 必须与目标源码版本一致
 git apply "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
 ```
 
@@ -399,7 +412,7 @@ Copy-Item <backup-omp.exe> C:\Users\Administrator\.local\bin\omp.exe -Force
 
 ```powershell
 cd <oh-my-pi-source>
-$version = "16.3.11" # 改成当前 Oh My Pi 源码版本
+$version = "16.3.15" # 必须与当前补丁版本一致
 git apply -R "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
 ```
 
@@ -421,9 +434,9 @@ git apply -R "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-en
 - `aboveEditor` 小白点栏固定在输入框上方。
 - 跳转后输入框仍可直接输入。
 
-当前第一版限制：
+当前行为说明：
 
-- `scrollToEntryId(..., { highlight: true })` 接收但暂不做视觉高亮。
 - 固定输入框通过内部 transcript viewport 实现，浏览历史应依赖扩展跳转/后续内部滚动键，而不是终端原生 scrollback。
 - PageUp/PageDown 已接入内部 viewport；编辑器有多行草稿时保留编辑器自己的翻页行为。
 - 鼠标滚轮已按 SGR mouse wheel 接入内部 viewport；是否生效取决于终端/Oh My Pi TUI 是否向主界面发送 SGR mouse 事件。
+- PageDown、滚轮或消息跳转回到底部后会恢复自动尾随，后续新增和流式增长的消息保持可见。

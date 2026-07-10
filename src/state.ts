@@ -24,15 +24,39 @@ export function moveSelection(state: RailState, delta: number): RailState {
   return { ...state, selectedIndex: clamp(next, 0, state.messages.length - 1) };
 }
 
+export interface VisibleRange {
+  start: number;
+  end: number;
+}
+
+export function visibleRange(
+  messageCount: number,
+  selectedIndex: number,
+  width: number
+): VisibleRange {
+  const maxVisible = maxVisibleFor(width);
+  const maxStart = Math.max(0, messageCount - maxVisible);
+  if (selectedIndex < 0 || selectedIndex >= messageCount) {
+    return { start: maxStart, end: messageCount };
+  }
+
+  const centeredStart = selectedIndex - Math.floor(maxVisible / 2);
+  const start = clamp(centeredStart, 0, maxStart);
+  return { start, end: Math.min(messageCount, start + maxVisible) };
+}
+
 export function selectByVisibleIndex(
   state: RailState,
   n: number,
   width: number
 ): RailState {
   if (state.messages.length === 0) return state;
-  const maxVisible = maxVisibleFor(width);
-  const start = Math.max(0, state.messages.length - maxVisible);
-  const idx = clamp(start + (n - 1), start, state.messages.length - 1);
+  const { start, end } = visibleRange(
+    state.messages.length,
+    state.selectedIndex,
+    width
+  );
+  const idx = clamp(start + (n - 1), start, end - 1);
   return { ...state, selectedIndex: idx };
 }
 

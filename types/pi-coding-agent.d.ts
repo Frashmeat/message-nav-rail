@@ -1,6 +1,7 @@
 // 本地类型声明存根：@oh-my-pi/pi-coding-agent 的扩展 API 表面
 // 仅声明本扩展实际使用的部分；真实类型由宿主在运行时提供
-// 真实定义见 oh-my-pi/packages/coding-agent/src/extensibility/extensions/types.ts
+// 与 ohmypi/oh-my-pi-clean 16.3.15 的扩展 API 子集保持一致
+// 真实定义见 packages/coding-agent/src/extensibility/extensions/types.ts
 declare module "@oh-my-pi/pi-coding-agent" {
   export type NotifyLevel = "info" | "warning" | "error";
   export type WidgetPlacement = "aboveEditor" | "belowEditor";
@@ -13,7 +14,6 @@ declare module "@oh-my-pi/pi-coding-agent" {
 
   export interface ScrollToEntryOptions {
     align?: "start" | "center" | "end" | "nearest";
-    highlight?: boolean;
   }
 
   export interface ExtensionUI {
@@ -25,8 +25,8 @@ declare module "@oh-my-pi/pi-coding-agent" {
     scrollToEntryId?(
       entryId: string,
       options?: ScrollToEntryOptions,
-    ): boolean | Promise<boolean>;
-    onTerminalInput?(
+    ): boolean;
+    onTerminalInput(
       handler: (data: string) => { consume?: boolean } | undefined,
     ): () => void;
     notify(message: string, type?: NotifyLevel): void;
@@ -51,14 +51,13 @@ declare module "@oh-my-pi/pi-coding-agent" {
   }
 
   export interface ReadonlySessionManager {
-    getBranch?(): SessionEntry[];
+    getBranch(): SessionEntry[];
     getEntries?(): SessionEntry[];
   }
 
   export interface ExtensionContext {
     ui: ExtensionUI;
     sessionManager: ReadonlySessionManager;
-    navigateTree?(id: string, opts?: { summarize?: boolean }): Promise<unknown>;
   }
 
   export interface ExtensionLogger {

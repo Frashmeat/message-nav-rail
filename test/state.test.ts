@@ -4,6 +4,7 @@ import {
   moveSelection,
   rebuildFromEntries,
   selectByVisibleIndex,
+  visibleRange,
 } from "../src/state.ts";
 import { INITIAL_STATE, type RailState } from "../src/types.ts";
 
@@ -103,5 +104,12 @@ describe("state", () => {
     }));
     const s = mkState(msgs);
     assert.equal(selectByVisibleIndex(s, 9, 10).selectedIndex, 49);
+  });
+
+  it("visibleRange 始终包含选中项", () => {
+    assert.deepEqual(visibleRange(50, -1, 10), { start: 45, end: 50 });
+    assert.deepEqual(visibleRange(50, 0, 10), { start: 0, end: 5 });
+    assert.deepEqual(visibleRange(50, 25, 10), { start: 23, end: 28 });
+    assert.deepEqual(visibleRange(50, 49, 10), { start: 45, end: 50 });
   });
 });

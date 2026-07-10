@@ -20,9 +20,7 @@ type MockUI = ExtensionUI;
 
 type MockSessionManager = ReadonlySessionManager;
 
-interface MockCtx extends ExtensionContext {
-  navigateTree?: (id: string, opts?: { summarize?: boolean }) => Promise<unknown>;
-}
+type MockCtx = ExtensionContext;
 
 interface MockPiHandle {
   pi: ExtensionAPI;
@@ -228,6 +226,31 @@ describe("index 集成", () => {
     assert.equal(last.content[0], "● ◐");
   });
 
+  it("branch 定时刷新不会清除尚未持久化的 streaming 消息", async () => {
+    const branchCtx: MockCtx = {
+      ui: mock.ui,
+      sessionManager: {
+        getBranch: () => [
+          { id: "u1", type: "message", message: { role: "user", content: "q" } },
+        ],
+      },
+    };
+    await mock.emit("session_start", {}, branchCtx);
+    await mock.emit("message_start", mkMessageStartEvent("assistant", []), branchCtx);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(mock.widgets.at(-1)!.content[0], "● ◐");
+    await mock.emit(
+      "message_update",
+      mkFlatMessageEvent("message_update", "assistant", "正在回答"),
+      branchCtx
+    );
+    mock.fireShortcut("alt+right");
+    mock.fireShortcut("alt+right");
+    mock.fireShortcut("alt+/");
+    assert.match(mock.notifications.at(-1)!.msg, /正在回答/);
+  });
+
   it("message_start 忽略 user 角色", async () => {
     await mock.emit("message_start", mkMessageStartEvent("user", "hi"), ctx);
     assert.equal(mock.widgets.length, 0);
@@ -323,6 +346,23 @@ describe("index 集成", () => {
     assert.equal(last.content[0], "◉ ●");
   });
 
+  it("长会话中 Alt+→ 会移动可见窗口展示第一条选中消息", async () => {
+    const branchCtx: MockCtx = {
+      ui: mock.ui,
+      sessionManager: {
+        getBranch: () => Array.from({ length: 50 }, (_, i) => ({
+          id: `u${i}`,
+          type: "message",
+          message: { role: "user", content: String(i) },
+        })),
+      },
+    };
+    await mock.emit("session_start", {}, branchCtx);
+    mock.fireShortcut("alt+right");
+
+    assert.equal(mock.widgets.at(-1)!.content[0].startsWith("◉ "), true);
+  });
+
   it("Alt+← 不越过首位", async () => {
     await mock.emit("input", mkInputEvent("a"), ctx);
     mock.fireShortcut("alt+right");
@@ -374,12 +414,12 @@ describe("index 集成", () => {
   });
 
   it("Alt+→ 选中并跳转到对应 entry", async () => {
-    const scrolled: Array<{ id: string; align?: string; highlight?: boolean }> = [];
+    const scrolled: Array<{ id: string; align?: string }> = [];
     const scrollCtx: MockCtx = {
       ui: {
         ...mock.ui,
         scrollToEntryId: (id, opts) => {
-          scrolled.push({ id, align: opts?.align, highlight: opts?.highlight });
+          scrolled.push({ id, align: opts?.align });
           return true;
         },
       },
@@ -392,7 +432,7 @@ describe("index 集成", () => {
     };
     await mock.emit("session_start", {}, scrollCtx);
     mock.fireShortcut("alt+right");
-    assert.deepEqual(scrolled[0], { id: "e0", align: "center", highlight: true });
+    assert.deepEqual(scrolled[0], { id: "e0", align: "center" });
   });
 
   it("跳转前会用 getBranch 真实 entry id 替换临时 id", async () => {
@@ -426,25 +466,7 @@ describe("index 集成", () => {
     assert.equal(scrolled[0], "real-user-entry-id");
   });
 
-  it("缺少 scrollToEntryId 时可回退到 legacy navigateTree", async () => {
-    const navigated: string[] = [];
-    const navCtx: MockCtx = {
-      ui: mock.ui,
-      sessionManager: {
-        getBranch: () => [
-          { id: "e0", type: "message", message: { role: "user", content: "a" } },
-          { id: "e1", type: "message", message: { role: "user", content: "b" } },
-        ],
-      },
-      navigateTree: async (id) => { navigated.push(id); },
-    };
-    await mock.emit("input", mkInputEvent("a"), navCtx);
-    await mock.emit("input", mkInputEvent("b"), navCtx);
-    mock.fireShortcut("alt+right");
-    assert.equal(navigated[0], "e0");
-  });
-
-  it("缺少 navigateTree 时快捷键只更新选中不崩溃", async () => {
+  it("缺少 scrollToEntryId 时快捷键只更新选中不崩溃", async () => {
     await mock.emit("input", mkInputEvent("a"), ctx);
     mock.fireShortcut("alt+right");
     assert.equal(mock.widgets.at(-1)!.content[0], "◉");

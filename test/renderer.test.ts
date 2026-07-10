@@ -45,11 +45,11 @@ describe("renderRail", () => {
     assert.equal(out[0].split(" ").length, 5);
   });
 
-  it("选中索引在可见窗口外不影响显示", () => {
+  it("选中索引在默认尾部窗口外时移动窗口显示选中项", () => {
     const msgs = Array.from({ length: 50 }, (_, i) =>
       mkMsg("user", String(i))
     );
     const out = renderRail(msgs, 0, 10);
-    assert.equal(out[0], "● ● ● ● ●");
+    assert.equal(out[0], "◉ ● ● ● ●");
   });
 });

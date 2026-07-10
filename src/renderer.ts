@@ -1,5 +1,5 @@
 import type { RailMessage } from "./types";
-import { maxVisibleFor } from "./util";
+import { visibleRange } from "./state";
 
 const SYMBOLS = {
   user: "●",
@@ -15,9 +15,8 @@ export function renderRail(
 ): string[] {
   if (messages.length === 0) return [""];
 
-  const maxVisible = maxVisibleFor(width);
-  const start = Math.max(0, messages.length - maxVisible);
-  const visible = messages.slice(start);
+  const { start, end } = visibleRange(messages.length, selectedIndex, width);
+  const visible = messages.slice(start, end);
 
   let line = "";
   for (let i = 0; i < visible.length; i++) {

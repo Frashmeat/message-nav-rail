@@ -1,5 +1,5 @@
 param(
-  [string]$Repo = "F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean",
+  [string]$Repo = "",
   [string]$Branch = "",
   [string]$UpstreamRemote = "upstream",
   [string]$OriginRemote = "origin",
@@ -10,6 +10,7 @@ param(
   [switch]$Build,
   [switch]$Deploy,
   [switch]$NoDeploy,
+  [switch]$SkipNativeBuild,
   [switch]$SkipExtensionInstall,
   [switch]$DryRun,
   [switch]$Help
@@ -22,6 +23,9 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction Sile
 
 $script:CurrentStep = "initializing"
 $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
+if (-not $Repo) {
+  $Repo = Join-Path $script:ProjectRoot "ohmypi\oh-my-pi-clean"
+}
 
 if ($Help) {
   @"
@@ -175,6 +179,7 @@ function Invoke-CommandStep {
     [string]$FilePath,
     [string[]]$Arguments = @(),
     [string]$WorkingDirectory = $Repo,
+    [hashtable]$Environment = @{},
     [string[]]$Suggestions = @()
   )
 
@@ -186,13 +191,21 @@ function Invoke-CommandStep {
   }
 
   Push-Location $WorkingDirectory
+  $oldEnv = @{}
   try {
+    foreach ($key in $Environment.Keys) {
+      $oldEnv[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+      [Environment]::SetEnvironmentVariable($key, [string]$Environment[$key], "Process")
+    }
     & $FilePath @Arguments
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
       Exit-WithProblem -Code $exitCode -Step $Step -Problem "Command failed with exit code ${exitCode}: $FilePath $($Arguments -join ' ')" -Suggestions $Suggestions
     }
   } finally {
+    foreach ($key in $oldEnv.Keys) {
+      [Environment]::SetEnvironmentVariable($key, $oldEnv[$key], "Process")
+    }
     Pop-Location
   }
 }
@@ -407,7 +420,7 @@ try {
 }
 
 if ($Verify) {
-  $verifyArgs = @("-BuildNative")
+  $verifyArgs = @("-Repo", $Repo, "-BuildNative")
   if ($SkipDepsInstall) {
     $verifyArgs += "-SkipDepsInstall"
   }
@@ -425,6 +438,28 @@ if ($Verify) {
   )
 }
 
+if (($Build -or -not $NoDeploy) -and -not $SkipNativeBuild) {
+  $nativeBuildArgs = @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    (Join-Path $PSScriptRoot "setup-oh-my-pi-bun-and-verify.ps1"),
+    "-Repo",
+    $Repo,
+    "-BuildNative",
+    "-SkipDepsInstall",
+    "-SkipTests",
+    "-SkipCheck"
+  )
+  Invoke-CommandStep -Step "build native addon" -FilePath "powershell.exe" -Arguments $nativeBuildArgs -WorkingDirectory $script:ProjectRoot -Suggestions @(
+    "open x64 Developer PowerShell for Visual Studio",
+    "cd $script:ProjectRoot",
+    ".\scripts\verify-oh-my-pi.cmd -SkipDepsInstall -SkipTests -SkipCheck",
+    "confirm rustc comes from $env:USERPROFILE\.cargo\bin\rustc.exe and host is x86_64-pc-windows-msvc"
+  )
+}
+
 if ($Build -or -not $NoDeploy) {
   Invoke-CommandStep -Step "build local omp.exe" -FilePath "bun" -Arguments @("--cwd=packages/coding-agent", "run", "build") -WorkingDirectory $Repo -Suggestions @(
     "cd $Repo",
@@ -434,7 +469,16 @@ if ($Build -or -not $NoDeploy) {
 }
 
 if (-not $NoDeploy) {
-  $deployArgs = @()
+  $deployArgs = @(
+    "-Repo",
+    $Repo,
+    "-BuiltOmp",
+    (Join-Path $Repo "packages\coding-agent\dist\omp.exe"),
+    "-SourceNativeDir",
+    (Join-Path $Repo "packages\natives\native"),
+    "-ExtensionRoot",
+    $script:ProjectRoot
+  )
   if ($SkipExtensionInstall) {
     $deployArgs += "-SkipExtensionInstall"
   }

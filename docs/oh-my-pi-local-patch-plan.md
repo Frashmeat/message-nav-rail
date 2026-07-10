@@ -10,13 +10,13 @@
 
 ## 背景
 
-当前扩展已结合本地 Oh My Pi 源码与 `omp/16.3.11` 核对：
+当前扩展已结合本地 Oh My Pi `16.3.15` 维护源码核对：
 
 - 可用：`pi.on`、`pi.registerShortcut`、`ctx.ui.setWidget`、`ctx.ui.notify`
 - 权威消息来源：`ctx.sessionManager.getBranch()`。扩展用它重建小白点，并用真实 `entry.id` 做跳转锚点。
 - 不应依赖：`ctx.sessionManager.onEntryAppended(handler)`。源码中它是 `SessionManager` 内部单回调属性，不是稳定的扩展订阅 API。
 - 需要本地补丁暴露：`ctx.ui.scrollToEntryId`
-- 不稳定或不应作为主路径：`ctx.navigateTree`
+- 不使用：事件 `ExtensionContext` 中不存在的 `ctx.navigateTree`
 - 不使用：`ctx.ui.setFooter`。当前 Oh My Pi interactive/RPC 路径并不适合作为小白点渲染面，扩展只使用 `ctx.ui.setWidget(..., { placement: "aboveEditor" })`。
 
 因此跳转和输入框固定不应在扩展里硬 hack。
@@ -75,7 +75,6 @@
 ```ts
 ctx.ui.scrollToEntryId(entryId: string, options?: {
   align?: "start" | "center" | "end" | "nearest";
-  highlight?: boolean;
 }): boolean;
 ```
 
@@ -177,7 +176,6 @@ function scrollToEntryId(id: string): boolean {
 function jumpToMessage(ctx: ExtensionContext, entryId: string): boolean {
   return ctx.ui.scrollToEntryId?.(entryId, {
     align: "center",
-    highlight: true,
   }) ?? false;
 }
 ```
@@ -210,7 +208,7 @@ patches/
 
 `patches/oh-my-pi/README.md` 记录补丁目标、前置条件、源码定位关键词、应用/回滚流程和验收清单。
 
-注意：Oh My Pi fork 的活跃维护工作树已经迁移到 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。当前安装的 `C:\Users\Administrator\.local\bin\omp.exe` 是 `omp/16.3.11`，干净维护工作树的 `@oh-my-pi/pi-coding-agent` 版本也是 `16.3.11`。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
+注意：Oh My Pi fork 的活跃维护工作树已经迁移到 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `16.3.15`；安装版本必须通过 `omp.exe --version` 实时确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
 
 当前第二版实现状态：
 
@@ -222,7 +220,7 @@ patches/
 - 固定布局每次 render 都返回终端高度行数，避免 TUI 根层再用完整 frame 尾部锚定把跳转压回底部。
 - 已接入 PageUp/PageDown 到内部 transcript viewport；编辑器有多行草稿时不抢占编辑器翻页。
 - 已接入 SGR mouse wheel 到内部 transcript viewport；是否生效取决于终端/Oh My Pi TUI 是否向主界面发送 SGR mouse 事件。
-- `highlight` 参数当前接收但暂不做视觉高亮。
+- 内部 viewport 回到底部后恢复自动尾随，后续新增和流式增长的消息继续可见。
 
 本地验证脚本 `scripts/setup-oh-my-pi-bun-and-verify.ps1` 会在测试前检查 Oh My Pi workspace 的 native addon。若 `packages/natives/native/pi_natives.win32-x64-baseline.node` 缺失，脚本会先尝试从 `C:\Users\Administrator\.omp\natives\<版本>` 复制同版本缓存；没有缓存时，需要显式运行：
 
@@ -238,7 +236,7 @@ patches/
 .\scripts\deploy-oh-my-pi-local.cmd
 ```
 
-该脚本会备份当前 `C:\Users\Administrator\.local\bin\omp.exe`，复制 `ohmypi\oh-my-pi-clean\packages\coding-agent\dist\omp.exe`，并默认重装当前扩展。
+该脚本会备份当前 `C:\Users\Administrator\.local\bin\omp.exe`，复制维护仓库中的 `packages\coding-agent\dist\omp.exe`，并默认重装当前扩展。显式指定 `-Repo` 时，验证、native 构建、二进制构建和部署使用同一个仓库路径。
 
 如果 native 构建报 `libnode.dll not found in any search path`，优先检查 `rustc -vV` 的 `host`。当前已遇到的失败原因是 Rust host 为 `x86_64-pc-windows-gnullvm`，触发了 `napi-build` 的 GNU 链接路径；Oh My Pi Windows 本地构建应切换到 `nightly-2026-04-29-x86_64-pc-windows-msvc`，并在 Developer PowerShell for Visual Studio 中执行验证脚本。如果 `rustup` 不存在，而 `rustc` 来源是 `C:\Program Files\Rust stable LLVM ...\bin\rustc.exe`，需要先安装 rustup，并让 `%USERPROFILE%\.cargo\bin` 在 PATH 中优先于旧 Rust 目录。
 

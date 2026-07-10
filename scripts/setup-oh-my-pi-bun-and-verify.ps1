@@ -1,5 +1,5 @@
 param(
-  [string]$Repo = "F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean",
+  [string]$Repo = "",
   [string]$BunVersion = "1.3.14",
   [string]$TempRoot = "",
   [string]$NativesCacheRoot = "",
@@ -13,6 +13,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$projectRoot = Split-Path -Parent $PSScriptRoot
+if (-not $Repo) {
+  $Repo = Join-Path $projectRoot "ohmypi\oh-my-pi-clean"
+}
 
 if (-not $TempRoot) {
   $TempRoot = Join-Path (Split-Path -Parent $PSScriptRoot) ".tmp"
@@ -43,10 +47,11 @@ function Add-PathForCurrentProcess {
   if (-not $PathToAdd -or -not (Test-Path -LiteralPath $PathToAdd)) {
     return
   }
-  $parts = $env:PATH -split ';'
-  if ($parts -notcontains $PathToAdd) {
-    $env:PATH = "$PathToAdd;$env:PATH"
-  }
+  $fullPathToAdd = (Resolve-Path -LiteralPath $PathToAdd).Path
+  $parts = @($env:PATH -split ';' | Where-Object {
+    $_ -and $_.Trim() -and ([string]::Compare($_.TrimEnd('\'), $fullPathToAdd.TrimEnd('\'), $true) -ne 0)
+  })
+  $env:PATH = (@($fullPathToAdd) + $parts) -join ';'
 }
 
 function Add-CargoPathForCurrentProcess {
@@ -107,7 +112,7 @@ function Get-BunCommand {
     Add-PathForCurrentProcess $npmPrefix
   }
   Add-PathForCurrentProcess (Join-Path $env:USERPROFILE ".bun\bin")
-  Add-PathForCurrentProcess "C:\Users\Administrator\.local\bin"
+  Add-PathForCurrentProcess (Join-Path $env:USERPROFILE ".local\bin")
 
   $cmd = Get-Command bun -ErrorAction SilentlyContinue
   if ($cmd) {
@@ -134,6 +139,30 @@ function Test-DependencyInstalled {
 function Get-JsonFile {
   param([string]$Path)
   return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+}
+
+function Get-NativeVersion {
+  $pkg = Get-JsonFile (Join-Path $Repo "packages\natives\package.json")
+  return [string]$pkg.version
+}
+
+function Get-NativeSentinel {
+  param([string]$Version)
+  return "__piNativesV$($Version.Replace(".", "_"))"
+}
+
+function Test-FileContainsAscii {
+  param(
+    [string]$Path,
+    [string]$Needle
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return $false
+  }
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+  return $text.Contains($Needle)
 }
 
 function Get-NativePlatformTag {
@@ -174,15 +203,44 @@ function Test-NativeAddonAvailable {
     [string[]]$RequiredNames
   )
 
+  $version = Get-NativeVersion
+  $sentinel = Get-NativeSentinel $version
   $nativeDir = Join-Path $Repo "packages\natives\native"
   foreach ($name in $RequiredNames) {
-    if (Test-Path -LiteralPath (Join-Path $nativeDir $name)) {
+    $candidate = Join-Path $nativeDir $name
+    if (Test-FileContainsAscii $candidate $sentinel) {
       return $true
     }
   }
 
   $matching = Get-ChildItem -LiteralPath $nativeDir -Filter "pi_natives.$PlatformTag*.node" -ErrorAction SilentlyContinue
-  return $matching.Count -gt 0
+  foreach ($candidate in $matching) {
+    if (Test-FileContainsAscii $candidate.FullName $sentinel) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Get-NativeAddonDiagnostics {
+  param([string]$PlatformTag)
+
+  $version = Get-NativeVersion
+  $sentinel = Get-NativeSentinel $version
+  $nativeDir = Join-Path $Repo "packages\natives\native"
+  $matching = @(Get-ChildItem -LiteralPath $nativeDir -Filter "pi_natives.$PlatformTag*.node" -ErrorAction SilentlyContinue)
+  if ($matching.Count -eq 0) {
+    return @("No pi_natives.$PlatformTag*.node file exists in $nativeDir.")
+  }
+
+  return @($matching | ForEach-Object {
+    $hasSentinel = Test-FileContainsAscii $_.FullName $sentinel
+    if ($hasSentinel) {
+      "$($_.FullName) matches $sentinel"
+    } else {
+      "$($_.FullName) is present but does not contain $sentinel"
+    }
+  })
 }
 
 function Copy-NativeAddonsFromCache {
@@ -208,6 +266,11 @@ function Copy-NativeAddonsFromCache {
   $nativeDir = Join-Path $Repo "packages\natives\native"
   New-Item -ItemType Directory -Force -Path $nativeDir | Out-Null
   foreach ($sourceFile in $sourceFiles) {
+    $sentinel = Get-NativeSentinel $Version
+    if (-not (Test-FileContainsAscii $sourceFile.FullName $sentinel)) {
+      Write-Host "Skipping cached native addon with mismatched version sentinel: $($sourceFile.FullName)"
+      continue
+    }
     Copy-Item -LiteralPath $sourceFile.FullName -Destination (Join-Path $nativeDir $sourceFile.Name) -Force
   }
   Write-Host "Restored native addon from $cacheDir"
@@ -294,6 +357,9 @@ function Ensure-NativeAddonReady {
     return
   }
 
+  $diagnostics = Get-NativeAddonDiagnostics $platformTag
+  $diagnostics | ForEach-Object { Write-Host $_ }
+
   if (Test-OrRestoreNativeAddon) {
     return
   }
@@ -303,12 +369,14 @@ function Ensure-NativeAddonReady {
     if (Test-NativeAddonAvailable $platformTag $requiredNames) {
       return
     }
-    throw "Native build finished but required addon was not found in packages\natives\native."
+    $details = (Get-NativeAddonDiagnostics $platformTag) -join "`n"
+    throw "Native build finished but required addon was not found or does not match @oh-my-pi/pi-natives@$(Get-NativeVersion).`n$details"
   }
 
   $nativesPackage = Get-JsonFile (Join-Path $Repo "packages\natives\package.json")
   $expected = $requiredNames -join " or "
-  throw "Oh My Pi workspace native addon is missing ($expected). Rerun with -BuildNative, or run the installed omp once if it is the same version so it can populate $env:USERPROFILE\.omp\natives\$($nativesPackage.version)."
+  $details = $diagnostics -join "`n"
+  throw "Oh My Pi workspace native addon is missing or version-mismatched ($expected). Required sentinel: $(Get-NativeSentinel $nativesPackage.version). Rerun with -BuildNative.`n$details"
 }
 
 function Invoke-BunInstallWithRetry {

@@ -4,6 +4,7 @@ export interface RailMessage {
   preview: string;
   timestamp: number;
   streaming?: boolean;
+  anchorable?: boolean;
 }
 
 export interface RailState {

@@ -2,37 +2,35 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   moveSelection,
-  clampSelection,
   rebuildFromEntries,
   selectByVisibleIndex,
 } from "../src/state.ts";
-import { INITIAL_STATE } from "../src/types.ts";
+import { INITIAL_STATE, type RailState } from "../src/types.ts";
+
+const mkState = (messages: RailState["messages"]): RailState => ({
+  ...INITIAL_STATE,
+  messages,
+});
 
 describe("state", () => {
   it("moveSelection 右移", () => {
-    const s = {
-      ...INITIAL_STATE,
-      messages: [{ id: "1", type: "user", preview: "", timestamp: 0 }],
-      selectedIndex: -1,
-    };
+    const s = mkState([
+      { id: "1", type: "user", preview: "", timestamp: 0 },
+    ]);
     assert.equal(moveSelection(s, 1).selectedIndex, 0);
   });
 
   it("moveSelection 左移 clamp 到 0", () => {
-    const s = {
-      ...INITIAL_STATE,
-      messages: [{ id: "1", type: "user", preview: "", timestamp: 0 }],
-      selectedIndex: 0,
-    };
+    const s = mkState([
+      { id: "1", type: "user", preview: "", timestamp: 0 },
+    ]);
     assert.equal(moveSelection(s, -1).selectedIndex, 0);
   });
 
   it("moveSelection 右移 clamp 到末位", () => {
-    const s = {
-      ...INITIAL_STATE,
-      messages: [{ id: "1", type: "user", preview: "", timestamp: 0 }],
-      selectedIndex: 0,
-    };
+    const s = mkState([
+      { id: "1", type: "user", preview: "", timestamp: 0 },
+    ]);
     assert.equal(moveSelection(s, 1).selectedIndex, 0);
   });
 
@@ -40,19 +38,10 @@ describe("state", () => {
     assert.equal(moveSelection(INITIAL_STATE, 1).selectedIndex, -1);
   });
 
-  it("clampSelection 修正越界", () => {
-    const s = {
-      ...INITIAL_STATE,
-      messages: [{ id: "1", type: "user", preview: "", timestamp: 0 }],
-      selectedIndex: 5,
-    };
-    assert.equal(clampSelection(s).selectedIndex, 0);
-  });
-
   it("rebuildFromEntries 重建用户和模型消息", () => {
     const entries = [
-      { type: "user", content: "你好" },
-      { type: "assistant", content: "你好，有什么可以帮你？" },
+      { type: "message", message: { role: "user", content: "你好" } },
+      { type: "message", message: { role: "assistant", content: [{ type: "text", text: "你好，有什么可以帮你？" }] } },
     ];
     const s = rebuildFromEntries(entries);
     assert.equal(s.messages.length, 2);
@@ -66,18 +55,31 @@ describe("state", () => {
 
   it("rebuildFromEntries preview 截断到 80 字符", () => {
     const long = "x".repeat(200);
-    const entries = [{ type: "user", content: long }];
+    const entries = [{ type: "message", message: { role: "user", content: long } }];
     const s = rebuildFromEntries(entries);
     assert.equal(s.messages[0].preview.length, 80);
   });
 
-  it("rebuildFromEntries 忽略未知类型", () => {
+  it("rebuildFromEntries 忽略非 message 类型", () => {
     const entries = [
-      { type: "system", content: "系统消息" },
-      { type: "user", content: "用户" },
+      { type: "mode_change", mode: "plan" },
+      { type: "message", message: { role: "user", content: "用户" } },
     ];
     const s = rebuildFromEntries(entries);
     assert.equal(s.messages.length, 1);
+  });
+
+  it("rebuildFromEntries 兼容扁平 user/assistant entry", () => {
+    const entries = [
+      { id: "u1", type: "user", content: "扁平问题" },
+      { id: "a1", type: "assistant", text: "扁平回答" },
+    ];
+    const s = rebuildFromEntries(entries);
+    assert.equal(s.messages.length, 2);
+    assert.equal(s.messages[0].id, "u1");
+    assert.equal(s.messages[0].preview, "扁平问题");
+    assert.equal(s.messages[1].id, "a1");
+    assert.equal(s.messages[1].preview, "扁平回答");
   });
 
   it("selectByVisibleIndex 选中可见窗口内第 N 个", () => {
@@ -87,7 +89,7 @@ describe("state", () => {
       preview: "",
       timestamp: 0,
     }));
-    const s = { ...INITIAL_STATE, messages: msgs, selectedIndex: -1 };
+    const s = mkState(msgs);
     assert.equal(selectByVisibleIndex(s, 1, 10).selectedIndex, 45);
     assert.equal(selectByVisibleIndex(s, 5, 10).selectedIndex, 49);
   });
@@ -99,7 +101,7 @@ describe("state", () => {
       preview: "",
       timestamp: 0,
     }));
-    const s = { ...INITIAL_STATE, messages: msgs, selectedIndex: -1 };
+    const s = mkState(msgs);
     assert.equal(selectByVisibleIndex(s, 9, 10).selectedIndex, 49);
   });
 });

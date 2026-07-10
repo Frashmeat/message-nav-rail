@@ -1,20 +1,27 @@
 import type { RailState, RailMessage } from "./types";
 import { INITIAL_STATE } from "./types";
+import { truncate, clamp, maxVisibleFor, PREVIEW_LEN } from "./util";
 
-const PREVIEW_LEN = 80;
+export interface MessageLike {
+  id?: unknown;
+  role?: unknown;
+  content?: unknown;
+  text?: unknown;
+}
+
+export interface SessionEntryLike {
+  id?: unknown;
+  type?: unknown;
+  message?: MessageLike;
+  role?: unknown;
+  content?: unknown;
+  text?: unknown;
+}
 
 export function moveSelection(state: RailState, delta: number): RailState {
   if (state.messages.length === 0) return state;
   const next = state.selectedIndex + delta;
   return { ...state, selectedIndex: clamp(next, 0, state.messages.length - 1) };
-}
-
-export function clampSelection(state: RailState): RailState {
-  if (state.messages.length === 0) return { ...state, selectedIndex: -1 };
-  return {
-    ...state,
-    selectedIndex: clamp(state.selectedIndex, 0, state.messages.length - 1),
-  };
 }
 
 export function selectByVisibleIndex(
@@ -23,34 +30,68 @@ export function selectByVisibleIndex(
   width: number
 ): RailState {
   if (state.messages.length === 0) return state;
-  const maxVisible = Math.max(1, Math.floor(width / 2));
+  const maxVisible = maxVisibleFor(width);
   const start = Math.max(0, state.messages.length - maxVisible);
   const idx = clamp(start + (n - 1), start, state.messages.length - 1);
   return { ...state, selectedIndex: idx };
 }
 
-export function rebuildFromEntries(
-  entries: Array<{ type: string; content: string }>
-): RailState {
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter(
+      (x): x is Record<string, unknown> =>
+        typeof x === "object" && x !== null
+    )
+    .filter((x): x is { type: string; text?: string } => {
+      const t = x["type"];
+      return typeof t === "string" && t === "text";
+    })
+    .map((x) => {
+      const t = x["text"];
+      return typeof t === "string" ? t : "";
+    })
+    .join("");
+}
+
+function textFromEntry(entry: SessionEntryLike): string {
+  const messageContent = entry.message?.content;
+  if (messageContent !== undefined) return messageText(messageContent);
+  if (entry.content !== undefined) return messageText(entry.content);
+  if (typeof entry.message?.text === "string") return entry.message.text;
+  return typeof entry.text === "string" ? entry.text : "";
+}
+
+export function railMessageFromEntry(
+  entry: SessionEntryLike,
+  fallbackIndex: number
+): RailMessage | null {
+  const role =
+    entry.type === "message"
+      ? entry.message?.role ?? entry.role
+      : entry.type;
+  if (role !== "user" && role !== "assistant") return null;
+  return {
+    id:
+      typeof entry.id === "string"
+        ? entry.id
+        : typeof entry.message?.id === "string"
+          ? entry.message.id
+          : `${role}-${fallbackIndex}`,
+    type: role,
+    preview: truncate(textFromEntry(entry), PREVIEW_LEN),
+    timestamp: 0,
+    streaming: false,
+    anchorable: true,
+  };
+}
+
+export function rebuildFromEntries(entries: SessionEntryLike[]): RailState {
   const messages: RailMessage[] = [];
-  for (const e of entries) {
-    if (e.type !== "user" && e.type !== "assistant") continue;
-    messages.push({
-      id: `${e.type}-${messages.length}`,
-      type: e.type,
-      preview: truncate(e.content ?? "", PREVIEW_LEN),
-      timestamp: 0,
-      streaming: false,
-    });
+  for (const entry of entries) {
+    const msg = railMessageFromEntry(entry, messages.length);
+    if (msg) messages.push(msg);
   }
   return { ...INITIAL_STATE, messages };
-}
-
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return s.slice(0, n - 1) + "…";
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
 }

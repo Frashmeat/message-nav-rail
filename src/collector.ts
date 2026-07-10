@@ -1,6 +1,5 @@
 import type { RailState, RailMessage } from "./types";
-
-const PREVIEW_LEN = 80;
+import { truncate, PREVIEW_LEN } from "./util";
 
 export function onInput(state: RailState, text: string): RailState {
   const msg: RailMessage = {
@@ -8,6 +7,7 @@ export function onInput(state: RailState, text: string): RailState {
     type: "user",
     preview: truncate(text, PREVIEW_LEN),
     timestamp: Date.now(),
+    anchorable: false,
   };
   return { ...state, messages: [...state.messages, msg] };
 }
@@ -19,6 +19,7 @@ export function onMessageStart(state: RailState, id: string): RailState {
     preview: "",
     timestamp: Date.now(),
     streaming: true,
+    anchorable: false,
   };
   return {
     ...state,
@@ -55,9 +56,4 @@ export function onMessageEnd(
     streamingAssistantId:
       state.streamingAssistantId === id ? null : state.streamingAssistantId,
   };
-}
-
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return s.slice(0, n - 1) + "…";
 }

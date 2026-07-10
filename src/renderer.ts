@@ -1,4 +1,5 @@
 import type { RailMessage } from "./types";
+import { maxVisibleFor } from "./util";
 
 const SYMBOLS = {
   user: "●",
@@ -14,8 +15,7 @@ export function renderRail(
 ): string[] {
   if (messages.length === 0) return [""];
 
-  const slotWidth = 2; // 符号 + 空格
-  const maxVisible = Math.max(1, Math.floor(width / slotWidth));
+  const maxVisible = maxVisibleFor(width);
   const start = Math.max(0, messages.length - maxVisible);
   const visible = messages.slice(start);
 

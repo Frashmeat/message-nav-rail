@@ -2,12 +2,22 @@
   "name": "message-nav-rail",
   "version": "0.1.0",
   "type": "module",
+  "main": "message-nav-rail.ts",
+  "exports": {
+    ".": "./message-nav-rail.ts"
+  },
+  "omp": {
+    "extensions": ["./message-nav-rail.ts"]
+  },
   "scripts": {
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/message-nav-rail.mjs --external:@oh-my-pi/pi-coding-agent"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
     "@types/node": "^22.0.0",
-    "tsx": "^4.0.0"
+    "esbuild": "^0.28.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
   }
 }

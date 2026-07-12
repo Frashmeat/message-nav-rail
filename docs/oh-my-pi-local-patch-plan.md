@@ -210,7 +210,7 @@ patches/
 
 注意：Oh My Pi fork 的活跃维护工作树已经迁移到 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `16.3.15`；安装版本必须通过 `omp.exe --version` 实时确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
 
-当前第二版实现状态：
+当前第三版实现状态：
 
 - 已给扩展 UI context 增加可选 `scrollToEntryId(entryId, options): boolean`。
 - 已给 transcript 渲染增加 `entryId -> Component` 锚点映射。
@@ -221,6 +221,9 @@ patches/
 - 已接入 PageUp/PageDown 到内部 transcript viewport；编辑器有多行草稿时不抢占编辑器翻页。
 - 已接入 SGR mouse wheel 到内部 transcript viewport；是否生效取决于终端/Oh My Pi TUI 是否向主界面发送 SGR mouse 事件。
 - 内部 viewport 回到底部后恢复自动尾随，后续新增和流式增长的消息继续可见。
+- 消息内容超过内部 viewport 时显示右侧滚动条，滑块位置与内部行偏移同步；不溢出时自动隐藏。
+- transcript 按扣除滚动条预留列后的宽度重新换行，避免轨道覆盖文本并保持消息锚点位置准确。
+- 内部滚动条当前只显示位置，滚动交互继续使用鼠标滚轮、PageUp/PageDown 和小白点跳转，不支持拖拽滑块。
 
 本地验证脚本 `scripts/setup-oh-my-pi-bun-and-verify.ps1` 会在测试前检查 Oh My Pi workspace 的 native addon。若 `packages/natives/native/pi_natives.win32-x64-baseline.node` 缺失，脚本会先尝试从 `C:\Users\Administrator\.omp\natives\<版本>` 复制同版本缓存；没有缓存时，需要显式运行：
 

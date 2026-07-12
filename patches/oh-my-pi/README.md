@@ -298,6 +298,13 @@ cd F:\WebCode\message-nav-rail
 - 该方案固定的是应用内部消息视图。终端原生滚动条属于终端 scrollback，不能稳定实现“拖动原生滚动条时输入框仍固定”。验收时应使用 PageUp/PageDown、鼠标滚轮或小白点跳转验证应用内部滚动。
 - 固定布局会减少进入终端原生 scrollback 的内容；如果主界面没有启用 SGR mouse tracking，滚轮不会进入应用内部滚动，用户只能看到当前 viewport。因此第二版同时启用主界面 mouse tracking。
 
+第三版修正点：
+
+- 修复滚轮、PageDown 或消息跳转回到底部后仍停留在手动浏览模式的问题；只要 viewport 位于最大偏移量，后续新增消息和流式增长就恢复自动尾随。
+- `FixedTranscriptLayout` 使用共享 `ScrollView` 在消息区右侧绘制内部滚动条；内容溢出时显示轨道和滑块，不溢出时不显示。
+- 消息内容按扣除滚动条预留列后的宽度重新布局，避免滚动条覆盖最后一列文本，并保证锚点行号、跳转位置与实际换行一致。
+- 内部滚动条用于显示当前位置；当前交互仍通过鼠标滚轮、PageUp/PageDown 和小白点跳转完成，不提供鼠标拖拽滑块。
+
 ## 源码定位清单
 
 拿到源码后，优先用这些关键词定位实现位置：
@@ -433,6 +440,7 @@ git apply -R "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-en
 - 输入框在终端滚动时仍固定在底部。
 - `aboveEditor` 小白点栏固定在输入框上方。
 - 跳转后输入框仍可直接输入。
+- 消息内容超过内部 viewport 时显示右侧滚动条，滑块位置随滚轮、PageUp/PageDown 和消息跳转同步变化。
 
 当前行为说明：
 
@@ -440,3 +448,4 @@ git apply -R "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-en
 - PageUp/PageDown 已接入内部 viewport；编辑器有多行草稿时保留编辑器自己的翻页行为。
 - 鼠标滚轮已按 SGR mouse wheel 接入内部 viewport；是否生效取决于终端/Oh My Pi TUI 是否向主界面发送 SGR mouse 事件。
 - PageDown、滚轮或消息跳转回到底部后会恢复自动尾随，后续新增和流式增长的消息保持可见。
+- 内容超过 viewport 高度时显示应用内部右侧滚动条；该滚动条是位置指示器，不依赖终端原生 scrollback，也不支持鼠标拖拽。

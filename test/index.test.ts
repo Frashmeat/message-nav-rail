@@ -172,6 +172,11 @@ describe("index 集成", () => {
     assert.equal(last.opts?.placement, "aboveEditor");
   });
 
+  it("空白 input 不生成消息", async () => {
+    await mock.emit("input", mkInputEvent("   "), ctx);
+    assert.equal(mock.widgets.at(-1)!.content[0], "");
+  });
+
   it("完整对话流: input → start → update → end", async () => {
     await mock.emit("input", mkInputEvent("问题"), ctx);
     await mock.emit("message_start", mkMessageStartEvent("assistant", [{ type: "text", text: "" }]), ctx);
@@ -192,6 +197,40 @@ describe("index 集成", () => {
     await mock.emit("input", mkInputEvent("同一个问题"), ctx);
     await mock.emit("message_end", mkMessageEndEvent("user", "同一个问题"), ctx);
     assert.equal(mock.widgets.at(-1)!.content[0], "●");
+  });
+
+  it("相同长前缀的连续 input 不会误去重", async () => {
+    const prefix = "a".repeat(80);
+    await mock.emit("input", mkInputEvent(`${prefix}1`), ctx);
+    await mock.emit("input", mkInputEvent(`${prefix}2`), ctx);
+    assert.equal(mock.widgets.at(-1)!.content[0], "● ●");
+  });
+
+  it("相同事件 ID 的用户消息只添加一次", async () => {
+    const event = {
+      type: "message_end",
+      messageId: "user-event-id",
+      role: "user",
+      text: "问题",
+    };
+    await mock.emit("message_end", event, ctx);
+    await mock.emit("message_end", event, ctx);
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
+  });
+
+  it("input 与 message_end 共用事件 ID 后不会污染下一条消息", async () => {
+    const input = { type: "input", messageId: "shared-id", text: "问题" };
+    const end = {
+      type: "message_end",
+      messageId: "shared-id",
+      role: "user",
+      text: "问题",
+    };
+    await mock.emit("input", input, ctx);
+    await mock.emit("message_end", end, ctx);
+    await mock.emit("message_end", mkMessageEndEvent("assistant", "回答"), ctx);
+    await mock.emit("message_end", mkMessageEndEvent("user", "问题"), ctx);
+    assert.equal(mock.widgets.at(-1)!.content[0], "● ○ ●");
   });
 
   it("兼容扁平 message 事件 payload", async () => {
@@ -466,11 +505,12 @@ describe("index 集成", () => {
     assert.equal(scrolled[0], "real-user-entry-id");
   });
 
-  it("缺少 scrollToEntryId 时快捷键只更新选中不崩溃", async () => {
+  it("缺少 scrollToEntryId 时快捷键更新选中并提示", async () => {
     await mock.emit("input", mkInputEvent("a"), ctx);
     mock.fireShortcut("alt+right");
     assert.equal(mock.widgets.at(-1)!.content[0], "◉");
-    assert.equal(mock.notifications.length, 0);
+    assert.equal(mock.notifications.at(-1)?.level, "warning");
+    assert.match(mock.notifications.at(-1)?.msg ?? "", /无法跳转/);
     assert.deepEqual(mock.errors, []);
   });
 

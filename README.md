@@ -1,0 +1,55 @@
+# 消息导航栏扩展
+
+为 Oh My Pi 提供会话消息导航栏，在输入框上方显示用户与模型消息节点，并支持键盘选择、预览和跳转。
+
+## 功能
+
+- 使用 `●`、`○` 和 `◐` 展示用户消息、模型消息和流式输出。
+- 使用 `Alt+←` / `Alt+→` 移动当前选择。
+- 使用 `Alt+1` 至 `Alt+9` 选择当前可见范围内的消息。
+- 使用 `Alt+/` 预览选中消息。
+- 在宿主提供 `scrollToEntryId` 时跳转到对应会话条目。
+
+## 使用方式
+
+项目入口是 `message-nav-rail.ts`，`package.json` 已通过 `omp.extensions` 声明该扩展。安装依赖后，可由支持 TypeScript 扩展的 Oh My Pi 环境直接加载项目目录。
+
+```powershell
+npm install
+```
+
+如需生成单文件 ESM 产物：
+
+```powershell
+npm run build
+```
+
+构建结果位于 `dist/message-nav-rail.mjs`，`dist/` 不纳入版本控制。
+
+## 宿主要求
+
+基础导航栏和消息预览仅依赖公开扩展接口。消息跳转需要 Oh My Pi UI 提供 `scrollToEntryId`；当前本地补丁、同步和部署方式见：
+
+- `docs/oh-my-pi-local-patch-plan.md`
+- `patches/oh-my-pi/README.md`
+
+宿主不支持跳转或消息尚未持久化时，扩展会保留选中状态并显示警告，不会中断会话。
+
+## 开发验证
+
+```powershell
+npm test
+npm run typecheck
+npm run build
+```
+
+建议先运行相关单元测试和类型检查，再按需执行构建及 Oh My Pi 集成验证。Oh My Pi 本地验证脚本位于 `scripts/`。
+
+## 目录结构
+
+- `src/index.ts`：扩展入口、事件同步和宿主集成。
+- `src/collector.ts`：实时消息状态更新。
+- `src/state.ts`：会话重建、选择和可见范围。
+- `src/renderer.ts`：导航栏渲染。
+- `src/shortcuts.ts`：快捷键行为。
+- `test/`：单元与入口集成测试。

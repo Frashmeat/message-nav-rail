@@ -119,7 +119,9 @@ export default function messageNavRail(pi: ExtensionAPI) {
   let currentCtx: ExtensionContext | null = null;
   let terminalInputCtx: ExtensionContext | null = null;
   let unsubscribeTerminalInput: (() => void) | undefined;
+  let pendingUserInputText: string | null = null;
   const seenEntryIds = new Set<string>();
+  const seenEventIds = new Set<string>();
   const refreshTimers = new Set<ReturnType<typeof setTimeout>>();
 
   function currentWidth(): number {
@@ -186,6 +188,20 @@ export default function messageNavRail(pi: ExtensionAPI) {
       pi.logger?.warn("message-nav-rail terminal input listener failed", e);
       unsubscribeTerminalInput = undefined;
     }
+  }
+
+  function clearRefreshTimers() {
+    for (const timer of refreshTimers) clearTimeout(timer);
+    refreshTimers.clear();
+  }
+
+  function resetContextResources() {
+    clearRefreshTimers();
+    pendingUserInputText = null;
+    seenEventIds.clear();
+    unsubscribeTerminalInput?.();
+    unsubscribeTerminalInput = undefined;
+    terminalInputCtx = null;
   }
 
   function replaceStateFromEntries(branch: SessionEntryLike[]): RailMessage[] {
@@ -267,10 +283,35 @@ export default function messageNavRail(pi: ExtensionAPI) {
     }
   }
 
-  function appendUserMessageIfMissing(text: string) {
+  function appendUserMessageIfMissing(
+    text: string,
+    eventId?: string,
+    source: "input" | "message_end" = "message_end"
+  ) {
+    if (text.trim().length === 0) return;
+    if (eventId && seenEventIds.has(eventId)) {
+      if (source === "message_end" && pendingUserInputText === text) {
+        pendingUserInputText = null;
+      }
+      return;
+    }
+    if (eventId) seenEventIds.add(eventId);
+
+    if (source === "message_end") {
+      const matchesPendingInput = pendingUserInputText === text;
+      pendingUserInputText = null;
+      if (matchesPendingInput) return;
+    }
+
+    if (source === "input") pendingUserInputText = text;
     const preview = truncate(text, PREVIEW_LEN);
     const last = state.messages.at(-1);
-    if (last?.type === "user" && last.preview === preview) return;
+    if (
+      source === "message_end" &&
+      text.length <= PREVIEW_LEN &&
+      last?.type === "user" &&
+      last.preview === preview
+    ) return;
     state = onInput(state, text);
   }
 
@@ -302,6 +343,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
         const result = scrollToEntryId.call(ctx.ui, targetMessage.id, {
           align: "center",
         });
+        if (!result) ctx.ui.notify("当前消息暂时无法跳转", "warning");
         return result;
       } catch (e) {
         pi.logger?.error("scrollToEntryId failed", e);
@@ -309,6 +351,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
       }
     }
 
+    ctx.ui.notify("当前消息暂时无法跳转", "warning");
     return false;
   }
 
@@ -317,7 +360,11 @@ export default function messageNavRail(pi: ExtensionAPI) {
     ensureTerminalInputListener(ctx);
     try {
       tryRefreshFromBranch(ctx, false);
-      appendUserMessageIfMissing(inputText(event));
+      appendUserMessageIfMissing(
+        inputText(event),
+        optionalEventMessageId(event),
+        "input"
+      );
       rerender();
       scheduleBranchRefresh(ctx);
     } catch (e) {
@@ -375,7 +422,11 @@ export default function messageNavRail(pi: ExtensionAPI) {
       tryRefreshFromBranch(ctx, false);
       const role = eventRole(event);
       if (role === "user") {
-        appendUserMessageIfMissing(eventContentText(event));
+        appendUserMessageIfMissing(
+          eventContentText(event),
+          optionalEventMessageId(event),
+          "message_end"
+        );
         rerender();
         scheduleBranchRefresh(ctx);
         return;
@@ -406,6 +457,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    resetContextResources();
     currentCtx = ctx;
     ensureTerminalInputListener(ctx);
     try {

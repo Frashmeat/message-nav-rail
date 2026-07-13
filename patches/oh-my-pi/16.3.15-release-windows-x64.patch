@@ -1,0 +1,286 @@
+diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md
+index 6c5d526e2..1f28093fd 100644
+--- a/packages/coding-agent/CHANGELOG.md
++++ b/packages/coding-agent/CHANGELOG.md
+@@ -2,6 +2,15 @@
+ 
+ ## [Unreleased]
+ 
++### Added
++
++- Added an extension transcript-scroll API and a fixed interactive layout that keeps the composer visible while the transcript scrolls independently.
++- Added a right-edge scrollbar to the interactive transcript viewport so overflow and the current scroll position remain visible while the composer stays fixed.
++
++### Fixed
++
++- Restored automatic transcript tail-following after PageDown, mouse-wheel scrolling, or an extension jump returns the viewport to the bottom.
++
+ ## [16.3.15] - 2026-07-09
+ 
+ ### Changed
+diff --git a/packages/coding-agent/src/modes/components/fixed-transcript-layout.ts b/packages/coding-agent/src/modes/components/fixed-transcript-layout.ts
+index 87b08e31d..1b14c5dfc 100644
+--- a/packages/coding-agent/src/modes/components/fixed-transcript-layout.ts
++++ b/packages/coding-agent/src/modes/components/fixed-transcript-layout.ts
+@@ -1,4 +1,5 @@
+-import type { Component } from "@oh-my-pi/pi-tui";
++import { type Component, Ellipsis, ScrollView } from "@oh-my-pi/pi-tui";
++import { theme } from "../theme/theme";
+ import type { TranscriptContainer } from "./transcript-container";
+ 
+ type TerminalRowsProvider = () => number | undefined;
+@@ -11,6 +12,12 @@ export class FixedTranscriptLayout implements Component {
+ 	readonly children: Component[];
+ 	#lastTranscriptRows = 1;
+ 	#activeTranscriptRows = 1;
++	#transcriptScrollView = new ScrollView([], {
++		height: 1,
++		scrollbar: "auto",
++		ellipsis: Ellipsis.Omit,
++		theme: { track: text => theme.fg("dim", text), thumb: text => theme.fg("accent", text) },
++	});
+ 
+ 	constructor(
+ 		readonly transcript: TranscriptContainer,
+@@ -46,15 +53,29 @@ export class FixedTranscriptLayout implements Component {
+ 		this.#activeTranscriptRows = Math.max(1, transcriptRows);
+ 		this.#lastTranscriptRows = this.#activeTranscriptRows;
+ 
+-		const transcriptLines = transcriptRows > 0 ? this.transcript.render(width).slice(0, transcriptRows) : [];
+-		const fillerRows = Math.max(0, height - transcriptLines.length - visibleBottomLines.length);
++		const transcriptWidth = width > 1 ? width - 1 : width;
++		const transcriptLines =
++			transcriptRows > 0 ? this.transcript.render(transcriptWidth).slice(0, transcriptRows) : [];
++		const visibleTranscriptLines = this.#renderTranscriptViewport(width, transcriptRows, transcriptLines);
++		const fillerRows = Math.max(0, height - visibleTranscriptLines.length - visibleBottomLines.length);
+ 		const lines: string[] = [];
+-		for (const line of transcriptLines) lines.push(line);
++		for (const line of visibleTranscriptLines) lines.push(line);
+ 		for (let i = 0; i < fillerRows; i++) lines.push("");
+ 		for (const line of visibleBottomLines) lines.push(line);
+ 		return lines.length > height ? lines.slice(lines.length - height) : lines;
+ 	}
+ 
++	#renderTranscriptViewport(width: number, rows: number, lines: readonly string[]): readonly string[] {
++		if (rows <= 0) return [];
++		const metrics = this.transcript.getViewportMetrics();
++		this.#transcriptScrollView.setHeight(rows);
++		this.#transcriptScrollView.setLines(lines);
++		this.#transcriptScrollView.setTotalRows(metrics.totalRows);
++		this.#transcriptScrollView.setScrollOffset(metrics.topRow);
++		this.#transcriptScrollView.setScrollbar(width > 1 ? "auto" : "never");
++		return this.#transcriptScrollView.render(width);
++	}
++
+ 	#terminalRows(): number {
+ 		const rows = this.terminalRowsProvider();
+ 		return Number.isFinite(rows) && rows !== undefined && rows > 0 ? Math.trunc(rows) : 24;
+diff --git a/packages/coding-agent/src/modes/components/transcript-container.ts b/packages/coding-agent/src/modes/components/transcript-container.ts
+index db8938847..886ed8370 100644
+--- a/packages/coding-agent/src/modes/components/transcript-container.ts
++++ b/packages/coding-agent/src/modes/components/transcript-container.ts
+@@ -133,6 +133,11 @@ export interface TranscriptScrollOptions {
+ 	align?: "start" | "center" | "end" | "nearest";
+ }
+ 
++export interface TranscriptViewportMetrics {
++	topRow: number;
++	totalRows: number;
++}
++
+ /**
+  * Transcript container that renders every block's current content each frame
+  * and reports the native-scrollback exactness boundary
+@@ -215,6 +220,13 @@ export class TranscriptContainer
+ 		this.invalidate();
+ 	}
+ 
++	getViewportMetrics(): TranscriptViewportMetrics {
++		return {
++			topRow: this.#viewportTopRow,
++			totalRows: this.#lines.length,
++		};
++	}
++
+ 	scrollComponentIntoView(component: Component, options: TranscriptScrollOptions = {}): void {
+ 		this.#pendingScroll = {
+ 			component,
+@@ -226,8 +238,9 @@ export class TranscriptContainer
+ 
+ 	scrollViewportRows(delta: number): void {
+ 		if (!Number.isFinite(delta) || delta === 0) return;
+-		this.#viewportManual = true;
+-		this.#viewportTopRow = Math.max(0, Math.trunc(this.#viewportTopRow + delta));
++		const maxTop = this.#maxViewportTop();
++		this.#viewportTopRow = Math.max(0, Math.min(maxTop, Math.trunc(this.#viewportTopRow + delta)));
++		this.#viewportManual = this.#viewportTopRow < maxTop;
+ 	}
+ 
+ 	setNativeScrollbackCommittedRows(rows: number): void {
+@@ -343,6 +356,7 @@ export class TranscriptContainer
+ 		const rows = this.#viewportRows(this.#renderWidth);
+ 		if (rows === undefined) {
+ 			this.#viewportTopRow = segment.startRow;
++			this.#syncManualModeAtTail();
+ 			return;
+ 		}
+ 		const targetStart = segment.startRow + segment.sep;
+@@ -353,17 +367,25 @@ export class TranscriptContainer
+ 			} else if (targetEnd > this.#viewportTopRow + rows) {
+ 				this.#viewportTopRow = targetEnd - rows;
+ 			}
+-			return;
+-		}
+-		if (pending.align === "end") {
++		} else if (pending.align === "end") {
+ 			this.#viewportTopRow = targetEnd - rows;
+-			return;
+-		}
+-		if (pending.align === "center") {
++		} else if (pending.align === "center") {
+ 			this.#viewportTopRow = Math.floor((targetStart + targetEnd - rows) / 2);
+-			return;
++		} else {
++			this.#viewportTopRow = targetStart;
+ 		}
+-		this.#viewportTopRow = targetStart;
++		this.#syncManualModeAtTail();
++	}
++
++	#maxViewportTop(): number {
++		const rows = this.#viewportRows(this.#renderWidth);
++		return rows === undefined ? 0 : Math.max(0, this.#lines.length - rows);
++	}
++
++	#syncManualModeAtTail(): void {
++		const maxTop = this.#maxViewportTop();
++		this.#viewportTopRow = Math.max(0, Math.min(this.#viewportTopRow, maxTop));
++		if (this.#viewportTopRow >= maxTop) this.#viewportManual = false;
+ 	}
+ 
+ 	#viewportSlice(width: number, lines: string[]): readonly string[] {
+@@ -376,7 +398,9 @@ export class TranscriptContainer
+ 		if (!this.#viewportManual) {
+ 			this.#viewportTopRow = lines.length - rows;
+ 		}
+-		this.#viewportTopRow = Math.max(0, Math.min(this.#viewportTopRow, lines.length - rows));
++		const maxTop = lines.length - rows;
++		this.#viewportTopRow = Math.max(0, Math.min(this.#viewportTopRow, maxTop));
++		if (this.#viewportTopRow >= maxTop) this.#viewportManual = false;
+ 		this.#nativeScrollbackLiveRegionStart = 0;
+ 		this.#stableRowsFloor = 0;
+ 		return lines.slice(this.#viewportTopRow, this.#viewportTopRow + rows);
+diff --git a/packages/coding-agent/test/modes/components/transcript-container.test.ts b/packages/coding-agent/test/modes/components/transcript-container.test.ts
+index b4fc47e30..4a5597323 100644
+--- a/packages/coding-agent/test/modes/components/transcript-container.test.ts
++++ b/packages/coding-agent/test/modes/components/transcript-container.test.ts
+@@ -26,6 +26,25 @@ class MutableBlock implements Component {
+ 	}
+ }
+ 
++class WrappingBlock implements Component {
++	constructor(readonly text: string) {}
++	invalidate(): void {}
++	render(width: number): string[] {
++		const chunkWidth = Math.max(1, width);
++		const lines: string[] = [];
++		for (let start = 0; start < this.text.length; start += chunkWidth) {
++			lines.push(this.text.slice(start, start + chunkWidth));
++		}
++		return lines;
++	}
++}
++
++function transcriptTextWithoutScrollbar(line: string): string {
++	const plain = stripVTControlCharacters(line);
++	const last = plain.at(-1);
++	return last === "│" || last === "█" ? plain.slice(0, -1).trimEnd() : plain;
++}
++
+ // A block that can declare itself still-mutating (a foreground tool awaiting its
+ // result). The container must keep such a block in the repaintable live region —
+ // even with finalized blocks below it — until it finalizes.
+@@ -771,9 +790,64 @@ describe("TranscriptContainer fixed viewport", () => {
+ 		expect(container.render(40)).toEqual(["a", "", "b"]);
+ 		expect(container.getNativeScrollbackLiveRegionStart()).toBe(0);
+ 	});
++
++	it("resumes following the tail after scrolling back to the bottom", () => {
++		const container = new TranscriptContainer();
++		container.setViewportRowsProvider(() => 3);
++		container.addChild(new MutableBlock(["a"]));
++		container.addChild(new MutableBlock(["b"]));
++		container.addChild(new MutableBlock(["c"]));
++		expect(container.render(40)).toEqual(["b", "", "c"]);
++
++		container.scrollViewportRows(-2);
++		expect(container.render(40)).toEqual(["a", "", "b"]);
++		container.scrollViewportRows(99);
++		expect(container.render(40)).toEqual(["b", "", "c"]);
++
++		container.addChild(new MutableBlock(["d"]));
++		expect(container.render(40)).toEqual(["c", "", "d"]);
++	});
+ });
+ 
+ describe("FixedTranscriptLayout", () => {
++	it("hides the internal scrollbar when the transcript fits the viewport", () => {
++		const transcript = new TranscriptContainer();
++		transcript.addChild(new MutableBlock(["only"]));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 4);
++
++		const lines = layout.render(8).map(line => stripVTControlCharacters(line));
++
++		expect(lines.slice(0, 3)).toEqual(["only", "", ""]);
++		expect(lines.join("")).not.toContain("│");
++		expect(lines.join("")).not.toContain("█");
++	});
++
++	it("renders an internal scrollbar and reserves its column for transcript wrapping", () => {
++		const transcript = new TranscriptContainer();
++		transcript.addChild(new WrappingBlock("abcde"));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 2);
++
++		const lines = layout.render(5).map(line => stripVTControlCharacters(line));
++
++		expect(lines).toEqual(["e   █", "> prompt"]);
++	});
++
++	it("moves the internal scrollbar thumb with the transcript viewport", () => {
++		const transcript = new TranscriptContainer();
++		transcript.addChild(new MutableBlock(["a"]));
++		transcript.addChild(new MutableBlock(["b"]));
++		transcript.addChild(new MutableBlock(["c"]));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 4);
++
++		const bottom = layout.render(8).map(line => stripVTControlCharacters(line));
++		expect(bottom.slice(0, 3).map(line => line.at(-1))).toEqual(["│", "│", "█"]);
++
++		transcript.scrollViewportRows(-2);
++		const top = layout.render(8).map(line => stripVTControlCharacters(line));
++		expect(top.slice(0, 3).map(line => line.at(-1))).toEqual(["█", "│", "│"]);
++		expect(top.at(-1)).toBe("> prompt");
++	});
++
+ 	it("keeps the bottom composer rows fixed at the terminal bottom", () => {
+ 		const transcript = new TranscriptContainer();
+ 		transcript.addChild(new MutableBlock(["a"]));
+@@ -785,7 +859,7 @@ describe("FixedTranscriptLayout", () => {
+ 
+ 		expect(lines).toHaveLength(5);
+ 		expect(lines.at(-1)).toBe("> prompt");
+-		expect(lines.slice(0, -1)).toEqual(["", "b", "", "c"]);
++		expect(lines.slice(0, -1).map(transcriptTextWithoutScrollbar)).toEqual(["", "b", "", "c"]);
+ 	});
+ 
+ 	it("scrolls transcript content without moving the composer row", () => {
+@@ -801,7 +875,8 @@ describe("FixedTranscriptLayout", () => {
+ 		const lines = layout.render(40);
+ 
+ 		expect(lines).toHaveLength(4);
+-		expect(lines).toEqual(["first", "", "second", "> prompt"]);
++		expect(lines.slice(0, -1).map(transcriptTextWithoutScrollbar)).toEqual(["first", "", "second"]);
++		expect(lines.at(-1)).toBe("> prompt");
+ 	});
+ });
+ 

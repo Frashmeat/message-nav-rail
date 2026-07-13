@@ -1,0 +1,105 @@
+name: 构建 Windows x64 预发行包
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_version:
+        description: "组合版本，例如 16.3.15-custom.1"
+        required: true
+        default: "16.3.15-custom.1"
+      oh_my_pi_ref:
+        description: "Frashmeat/oh-my-pi 的 commit 或分支"
+        required: true
+        default: "096ca834d0a13a7c0cfd5572ddb5ef3bb0b7cb2b"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      BUN_VERSION: "1.3.14"
+      OMP_DIR: "${{ github.workspace }}\.tmp\oh-my-pi"
+      RELEASE_PATCH: "${{ github.workspace }}\patches\oh-my-pi\16.3.15-release-windows-x64.patch"
+
+    steps:
+      - name: 检出 message-nav-rail
+        uses: actions/checkout@v4
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 检出 Oh My Pi fork
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none https://github.com/Frashmeat/oh-my-pi.git "$env:OMP_DIR"
+          git -C "$env:OMP_DIR" checkout --detach "${{ inputs.oh_my_pi_ref }}"
+          git -C "$env:OMP_DIR" apply --check "$env:RELEASE_PATCH"
+          git -C "$env:OMP_DIR" apply "$env:RELEASE_PATCH"
+          git -C "$env:OMP_DIR" diff --check
+
+      - name: 安装扩展依赖
+        run: npm ci
+
+      - name: 验证扩展
+        run: |
+          npm test
+          npm run typecheck
+          npm run build
+
+      - name: 安装 Oh My Pi 依赖
+        working-directory: ${{ env.OMP_DIR }}
+        run: bun install --frozen-lockfile
+
+      - name: 构建 Windows x64 native
+        working-directory: ${{ env.OMP_DIR }}
+        run: bun run build:native
+
+      - name: 构建 Windows x64 omp.exe
+        working-directory: ${{ env.OMP_DIR }}
+        env:
+          RELEASE_TARGETS: win32-x64
+        run: bun run ci:release:build-binaries -- --targets win32-x64
+
+      - name: 准备本地 dist 路径
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "$env:OMP_DIR\packages\coding-agent\dist" -Force | Out-Null
+          Copy-Item "$env:OMP_DIR\packages\coding-agent\binaries\omp-windows-x64.exe" "$env:OMP_DIR\packages\coding-agent\dist\omp.exe" -Force
+
+      - name: 探测内嵌 native
+        shell: pwsh
+        run: |
+          .\scripts\probe-oh-my-pi-binary.ps1 -Binary "$env:OMP_DIR\packages\coding-agent\dist\omp.exe" -NativeVariant baseline -KeepWorkDir
+          .\scripts\probe-oh-my-pi-binary.ps1 -Binary "$env:OMP_DIR\packages\coding-agent\dist\omp.exe" -NativeVariant modern -KeepWorkDir
+
+      - name: 打包 Release
+        shell: pwsh
+        run: |
+          .\scripts\package-release.ps1 `
+            -BundleVersion "${{ inputs.bundle_version }}" `
+            -OmpBinary "$env:OMP_DIR\packages\coding-agent\dist\omp.exe" `
+            -OhMyPiRepo "$env:OMP_DIR" `
+            -OhMyPiBaseRef "${{ inputs.oh_my_pi_ref }}" `
+            -ReleasePatch "$env:RELEASE_PATCH" `
+            -SkipExtensionBuild
+
+      - name: 上传 Windows x64 安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: message-nav-rail-omp-${{ inputs.bundle_version }}-windows-x64
+          path: |
+            .tmp/release/*.zip
+            .tmp/release/*.sha256
+          if-no-files-found: error
+          retention-days: 14

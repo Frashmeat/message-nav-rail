@@ -53,3 +53,22 @@ npm run build
 - `src/renderer.ts`：导航栏渲染。
 - `src/shortcuts.ts`：快捷键行为。
 - `test/`：单元与入口集成测试。
+
+## Windows x64 预构建发布
+
+项目正在建设 GitHub Release 分发流程，第一阶段仅支持 Windows 10/11 x64（Intel/AMD x86-64），不支持 Windows ARM64 和 32 位 Windows。
+
+本地生成测试包：
+
+```powershell
+.\scripts\package-release.ps1 -BundleVersion 16.3.15-custom.1
+```
+
+验证现有定制 `omp.exe` 的内嵌 native：
+
+```powershell
+.\scripts\probe-oh-my-pi-binary.ps1 -NativeVariant baseline -KeepWorkDir
+.\scripts\probe-oh-my-pi-binary.ps1 -NativeVariant modern -KeepWorkDir
+```
+
+完整实施计划和验收 Checklist 见 `docs/windows-x64-github-release-plan.md`。

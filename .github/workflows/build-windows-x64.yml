@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 90
     env:
       BUN_VERSION: "1.3.14"
+      # Bun 1.3.14 在 Windows 跨盘移动编译目标时会失败；让缓存与 D: workspace 保持同盘。
+      BUN_INSTALL_CACHE_DIR: ${{ github.workspace }}/.tmp/bun-cache
       OMP_DIR: ${{ github.workspace }}/.tmp/oh-my-pi
       RELEASE_PATCH: ${{ github.workspace }}/patches/oh-my-pi/17.0.1-release-windows-x64.patch
 

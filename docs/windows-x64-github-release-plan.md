@@ -18,6 +18,8 @@
 
 当前构建基线为 Oh My Pi `17.0.1`：锁定 `can1357/oh-my-pi` 提交 `b0d04e517335ada4e00ef8dc93aad9f4d1be8d21`，再应用 `patches/oh-my-pi/17.0.1-release-windows-x64.patch`。这使 GitHub Actions 不依赖尚未推送的本地 fork 合并提交。
 
+GitHub Windows runner 的 workspace 位于 `D:`，而 Bun 全局缓存通常位于 `C:`。Bun 1.3.14 存在编译目标跨盘移动失败的问题（Bun issue #28327），因此工作流将 `BUN_INSTALL_CACHE_DIR` 固定到 `${{ github.workspace }}/.tmp/bun-cache`，让下载、解压和最终缓存位于同一卷。
+
 ## 支持范围
 
 ### 支持

@@ -1,6 +1,6 @@
 // 本地类型声明存根：@oh-my-pi/pi-coding-agent 的扩展 API 表面
 // 仅声明本扩展实际使用的部分；真实类型由宿主在运行时提供
-// 与 ohmypi/oh-my-pi-clean 16.3.15 的扩展 API 子集保持一致
+// 与 ohmypi/oh-my-pi-clean 17.0.1 的扩展 API 子集保持一致
 // 真实定义见 packages/coding-agent/src/extensibility/extensions/types.ts
 declare module "@oh-my-pi/pi-coding-agent" {
   export type NotifyLevel = "info" | "warning" | "error";

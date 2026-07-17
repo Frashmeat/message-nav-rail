@@ -1,0 +1,1172 @@
+diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md
+index 5406325c3..009514e50 100644
+--- a/packages/coding-agent/CHANGELOG.md
++++ b/packages/coding-agent/CHANGELOG.md
+@@ -4,6 +4,12 @@
+ 
+ ### Added
+ 
++- Added an extension transcript-scroll API and a fixed interactive layout that keeps the composer visible while the transcript scrolls independently.
++- Added a right-edge scrollbar to the interactive transcript viewport so overflow and the current scroll position remain visible while the composer stays fixed.
++
++### Fixed
++
++- Restored automatic transcript tail-following after PageDown, mouse-wheel scrolling, or an extension jump returns the viewport to the bottom.
+ - `retry.fallbackChains` wildcards now support id-prefixed targets and keys: a chain entry like `"openrouter/google/*"` re-prefixes the failing model's bare id (`google-antigravity/gemini-x` → `openrouter/google/gemini-x`), a plain `"provider/*"` entry falling back *from* an aggregator strips the vendor prefix when the target provider only knows the bare id (`openrouter/google/x` → `google-vertex/x`), and an id-prefixed key (`"openrouter/google/*"`) scopes a chain to that provider's ids under the prefix.
+ 
+ ## [17.0.1] - 2026-07-16
+diff --git a/packages/coding-agent/scripts/build-binary.ts b/packages/coding-agent/scripts/build-binary.ts
+index 1fb51fcfa..f23f6b5de 100644
+--- a/packages/coding-agent/scripts/build-binary.ts
++++ b/packages/coding-agent/scripts/build-binary.ts
+@@ -6,6 +6,7 @@ import { compileCodingAgent } from "./compile-binary";
+ 
+ const packageDir = path.join(import.meta.dir, "..");
+ const repoRoot = path.join(packageDir, "..", "..");
++const bunExecutable = process.execPath;
+ 
+ /** Binary cross-compilation settings selected by `CROSS_TARGET`. */
+ export interface CrossBuild {
+@@ -62,7 +63,8 @@ async function runCommand(
+ 	env: NodeJS.ProcessEnv = Bun.env,
+ 	cwd: string = packageDir,
+ ): Promise<void> {
+-	const proc = Bun.spawn(command, {
++	const actualCommand = command[0] === "bun" ? [bunExecutable, ...command.slice(1)] : command;
++	const proc = Bun.spawn(actualCommand, {
+ 		cwd,
+ 		env,
+ 		stdout: "inherit",
+@@ -70,7 +72,7 @@ async function runCommand(
+ 	});
+ 	const exitCode = await proc.exited;
+ 	if (exitCode !== 0) {
+-		throw new Error(`Command failed with exit code ${exitCode}: ${command.join(" ")}`);
++		throw new Error(`Command failed with exit code ${exitCode}: ${actualCommand.join(" ")}`);
+ 	}
+ }
+ 
+diff --git a/packages/coding-agent/src/extensibility/extensions/types.ts b/packages/coding-agent/src/extensibility/extensions/types.ts
+index e8b75fed8..13a89a3d0 100644
+--- a/packages/coding-agent/src/extensibility/extensions/types.ts
++++ b/packages/coding-agent/src/extensibility/extensions/types.ts
+@@ -205,6 +205,10 @@ export interface ExtensionWidgetOptions {
+ 	placement?: WidgetPlacement;
+ }
+ 
++export interface ExtensionScrollToEntryOptions {
++	align?: "start" | "center" | "end" | "nearest";
++}
++
+ export type ExtensionUiComponent = Component & { dispose?(): void };
+ export type ExtensionUiComponentFactory = (tui: TUI, theme: Theme) => ExtensionUiComponent;
+ export type ExtensionWidgetContent = string[] | ExtensionUiComponentFactory | undefined;
+@@ -258,6 +262,9 @@ export interface ExtensionUIContext {
+ 	/** Set a widget to display above or below the editor. Accepts string array or component factory. */
+ 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
+ 
++	/** Scroll the visible transcript to a session entry without changing the session tree. */
++	scrollToEntryId?(entryId: string, options?: ExtensionScrollToEntryOptions): boolean;
++
+ 	/** Set a custom footer component, or undefined to restore the built-in footer. */
+ 	setFooter(factory: ExtensionUiComponentFactory | undefined): void;
+ 
+diff --git a/packages/coding-agent/src/modes/components/fixed-transcript-layout.ts b/packages/coding-agent/src/modes/components/fixed-transcript-layout.ts
+new file mode 100644
+index 000000000..1b14c5dfc
+--- /dev/null
++++ b/packages/coding-agent/src/modes/components/fixed-transcript-layout.ts
+@@ -0,0 +1,92 @@
++import { type Component, Ellipsis, ScrollView } from "@oh-my-pi/pi-tui";
++import { theme } from "../theme/theme";
++import type { TranscriptContainer } from "./transcript-container";
++
++type TerminalRowsProvider = () => number | undefined;
++
++/**
++ * Root layout for interactive mode: transcript scrolls inside its own viewport,
++ * while the composer/status area is always rendered at the terminal bottom.
++ */
++export class FixedTranscriptLayout implements Component {
++	readonly children: Component[];
++	#lastTranscriptRows = 1;
++	#activeTranscriptRows = 1;
++	#transcriptScrollView = new ScrollView([], {
++		height: 1,
++		scrollbar: "auto",
++		ellipsis: Ellipsis.Omit,
++		theme: { track: text => theme.fg("dim", text), thumb: text => theme.fg("accent", text) },
++	});
++
++	constructor(
++		readonly transcript: TranscriptContainer,
++		readonly bottomComponents: readonly Component[],
++		readonly terminalRowsProvider: TerminalRowsProvider,
++	) {
++		this.children = [transcript, ...bottomComponents];
++		transcript.setViewportRowsProvider(() => this.#activeTranscriptRows);
++	}
++
++	getTranscriptRows(): number {
++		return this.#lastTranscriptRows;
++	}
++
++	invalidate(): void {
++		this.transcript.invalidate();
++		for (const component of this.bottomComponents) component.invalidate?.();
++	}
++
++	dispose(): void {
++		this.transcript.dispose();
++		for (const component of this.bottomComponents) component.dispose?.();
++	}
++
++	render(width: number): readonly string[] {
++		width = Math.max(1, width);
++		const height = this.#terminalRows();
++		const bottomLines = this.#renderBottom(width);
++		const visibleBottomLines =
++			bottomLines.length > height ? bottomLines.slice(bottomLines.length - height) : bottomLines;
++		const transcriptRows = Math.max(0, height - visibleBottomLines.length);
++
++		this.#activeTranscriptRows = Math.max(1, transcriptRows);
++		this.#lastTranscriptRows = this.#activeTranscriptRows;
++
++		const transcriptWidth = width > 1 ? width - 1 : width;
++		const transcriptLines =
++			transcriptRows > 0 ? this.transcript.render(transcriptWidth).slice(0, transcriptRows) : [];
++		const visibleTranscriptLines = this.#renderTranscriptViewport(width, transcriptRows, transcriptLines);
++		const fillerRows = Math.max(0, height - visibleTranscriptLines.length - visibleBottomLines.length);
++		const lines: string[] = [];
++		for (const line of visibleTranscriptLines) lines.push(line);
++		for (let i = 0; i < fillerRows; i++) lines.push("");
++		for (const line of visibleBottomLines) lines.push(line);
++		return lines.length > height ? lines.slice(lines.length - height) : lines;
++	}
++
++	#renderTranscriptViewport(width: number, rows: number, lines: readonly string[]): readonly string[] {
++		if (rows <= 0) return [];
++		const metrics = this.transcript.getViewportMetrics();
++		this.#transcriptScrollView.setHeight(rows);
++		this.#transcriptScrollView.setLines(lines);
++		this.#transcriptScrollView.setTotalRows(metrics.totalRows);
++		this.#transcriptScrollView.setScrollOffset(metrics.topRow);
++		this.#transcriptScrollView.setScrollbar(width > 1 ? "auto" : "never");
++		return this.#transcriptScrollView.render(width);
++	}
++
++	#terminalRows(): number {
++		const rows = this.terminalRowsProvider();
++		return Number.isFinite(rows) && rows !== undefined && rows > 0 ? Math.trunc(rows) : 24;
++	}
++
++	#renderBottom(width: number): string[] {
++		const lines: string[] = [];
++		for (const component of this.bottomComponents) {
++			const rendered = component.render(width);
++			for (const line of rendered) lines.push(line);
++		}
++		return lines;
++	}
++}
+diff --git a/packages/coding-agent/src/modes/components/transcript-container.ts b/packages/coding-agent/src/modes/components/transcript-container.ts
+index 33c5e44ec..87f5ed264 100644
+--- a/packages/coding-agent/src/modes/components/transcript-container.ts
++++ b/packages/coding-agent/src/modes/components/transcript-container.ts
+@@ -134,6 +134,17 @@ const EMPTY_SEGMENTS: BlockSegment[] = [];
+ /** Shared empty result for an empty viewport-tail render (no allocation). */
+ const EMPTY_TAIL: readonly string[] = [];
+ 
++type TranscriptViewportRowsProvider = (width: number) => number | undefined;
++
++export interface TranscriptScrollOptions {
++	align?: "start" | "center" | "end" | "nearest";
++}
++
++export interface TranscriptViewportMetrics {
++	topRow: number;
++	totalRows: number;
++}
++
+ /**
+  * Transcript container that renders every block's current content each frame
+  * and reports the native-scrollback exactness boundary
+@@ -184,6 +195,15 @@ export class TranscriptContainer
+ 	// Finalized blocks wholly before this boundary are immutable on-screen history;
+ 	// their previous contribution can be replayed without calling render().
+ 	#committedRows = 0;
++	#viewportRowsProvider: TranscriptViewportRowsProvider | undefined;
++	#viewportTopRow = 0;
++	#viewportManual = false;
++	#pendingScroll:
++		| {
++				component: Component;
++				align: NonNullable<TranscriptScrollOptions["align"]>;
++		  }
++		| undefined;
+ 	// Leading children whose rows were handed to native scrollback and dropped
+ 	// from the local frame. Children remain owned by the session and can be
+ 	// re-rendered when the TUI prepares a destructive full replay.
+@@ -206,14 +226,52 @@ export class TranscriptContainer
+ 
+ 	override clear(): void {
+ 		this.#generation++;
++		this.#viewportTopRow = 0;
++		this.#viewportManual = false;
++		this.#pendingScroll = undefined;
+ 		super.clear();
+ 		this.#compactedChildStart = 0;
+ 		this.#committedRows = 0;
+ 		this.#replayPending = false;
+ 	}
+ 
++	setViewportRowsProvider(provider: TranscriptViewportRowsProvider | undefined): void {
++		this.#viewportRowsProvider = provider;
++		this.#viewportTopRow = 0;
++		this.#viewportManual = false;
++		this.#pendingScroll = undefined;
++		this.invalidate();
++	}
++
++	getViewportMetrics(): TranscriptViewportMetrics {
++		return {
++			topRow: this.#viewportTopRow,
++			totalRows: this.#lines.length,
++		};
++	}
++
++	scrollComponentIntoView(component: Component, options: TranscriptScrollOptions = {}): void {
++		this.#pendingScroll = {
++			component,
++			align: options.align ?? "center",
++		};
++		this.#viewportManual = true;
++		this.#applyPendingScroll();
++	}
++
++	scrollViewportRows(delta: number): void {
++		if (!Number.isFinite(delta) || delta === 0) return;
++		const maxTop = this.#maxViewportTop();
++		this.#viewportTopRow = Math.max(0, Math.min(maxTop, Math.trunc(this.#viewportTopRow + delta)));
++		this.#viewportManual = this.#viewportTopRow < maxTop;
++	}
++
+ 	override setNativeScrollbackCommittedRows(rows: number): void {
+-		this.#committedRows = Number.isFinite(rows) ? Math.max(0, Math.trunc(rows)) : 0;
++		this.#committedRows = this.#viewportRowsProvider
++			? 0
++			: Number.isFinite(rows)
++				? Math.max(0, Math.trunc(rows))
++				: 0;
+ 		for (let i = this.#compactedChildStart; i < this.children.length; i++) {
+ 			const child = this.children[i]!;
+ 			const segment = this.#segments[i];
+@@ -349,6 +407,71 @@ export class TranscriptContainer
+ 		return rows.length > maxRows ? rows.slice(rows.length - maxRows) : rows;
+ 	}
+ 
++	#viewportRows(width: number): number | undefined {
++		const value = this.#viewportRowsProvider?.(width);
++		if (value === undefined || !Number.isFinite(value)) return undefined;
++		return Math.max(1, Math.trunc(value));
++	}
++
++	#applyPendingScroll(): void {
++		const pending = this.#pendingScroll;
++		if (!pending) return;
++		const segment = this.#segments.find(s => s.component === pending.component);
++		if (!segment) return;
++		this.#pendingScroll = undefined;
++		const rows = this.#viewportRows(this.#renderWidth);
++		if (rows === undefined) {
++			this.#viewportTopRow = segment.startRow;
++			this.#syncManualModeAtTail();
++			return;
++		}
++		const targetStart = segment.startRow + segment.sep;
++		const targetEnd = segment.startRow + segment.rowCount;
++		if (pending.align === "nearest") {
++			if (targetStart < this.#viewportTopRow) {
++				this.#viewportTopRow = targetStart;
++			} else if (targetEnd > this.#viewportTopRow + rows) {
++				this.#viewportTopRow = targetEnd - rows;
++			}
++		} else if (pending.align === "end") {
++			this.#viewportTopRow = targetEnd - rows;
++		} else if (pending.align === "center") {
++			this.#viewportTopRow = Math.floor((targetStart + targetEnd - rows) / 2);
++		} else {
++			this.#viewportTopRow = targetStart;
++		}
++		this.#syncManualModeAtTail();
++	}
++
++	#maxViewportTop(): number {
++		const rows = this.#viewportRows(this.#renderWidth);
++		return rows === undefined ? 0 : Math.max(0, this.#lines.length - rows);
++	}
++
++	#syncManualModeAtTail(): void {
++		const maxTop = this.#maxViewportTop();
++		this.#viewportTopRow = Math.max(0, Math.min(this.#viewportTopRow, maxTop));
++		if (this.#viewportTopRow >= maxTop) this.#viewportManual = false;
++	}
++
++	#viewportSlice(width: number, lines: string[]): readonly string[] {
++		const rows = this.#viewportRows(width);
++		if (rows === undefined || lines.length <= rows) {
++			this.#viewportTopRow = 0;
++			this.#viewportManual = false;
++			return lines;
++		}
++		if (!this.#viewportManual) {
++			this.#viewportTopRow = lines.length - rows;
++		}
++		const maxTop = lines.length - rows;
++		this.#viewportTopRow = Math.max(0, Math.min(this.#viewportTopRow, maxTop));
++		if (this.#viewportTopRow >= maxTop) this.#viewportManual = false;
++		this.#nativeScrollbackLiveRegionStart = 0;
++		this.#stableRowsFloor = 0;
++		return lines.slice(this.#viewportTopRow, this.#viewportTopRow + rows);
++	}
++
+ 	override render(width: number): readonly string[] {
+ 		width = Math.max(1, width);
+ 		this.#nativeScrollbackLiveRegionStart = undefined;
+@@ -540,6 +663,8 @@ export class TranscriptContainer
+ 		if (lines.length !== row) lines.length = row;
+ 		this.#segments = segments;
+ 		this.#stableRowsFloor = Math.min(stableFloorBefore, stableRows, row);
++		this.#applyPendingScroll();
++		if (this.#viewportRows(width) !== undefined) return this.#viewportSlice(width, lines);
+ 		if (this.#replayPending) {
+ 			this.#replayPending = false;
+ 		} else {
+diff --git a/packages/coding-agent/src/modes/controllers/extension-ui-controller.test.ts b/packages/coding-agent/src/modes/controllers/extension-ui-controller.test.ts
+index 1dc3e51f2..88e6d407f 100644
+--- a/packages/coding-agent/src/modes/controllers/extension-ui-controller.test.ts
++++ b/packages/coding-agent/src/modes/controllers/extension-ui-controller.test.ts
+@@ -8,6 +8,7 @@ import { ExtensionUiController } from "./extension-ui-controller";
+ function makeHarness() {
+ 	const editor = new CustomEditor(getEditorTheme());
+ 	const requestRender = vi.fn();
++	const scrollToEntryId = vi.fn(() => true);
+ 	const addAutocompleteProvider = vi.fn();
+ 	let uiContext: ExtensionUIContext | undefined;
+ 	const ctx = {
+@@ -22,12 +23,14 @@ function makeHarness() {
+ 			expect(hasUI).toBe(true);
+ 			uiContext = context;
+ 		},
++		scrollToEntryId,
+ 		addAutocompleteProvider,
+ 	} as unknown as InteractiveModeContext;
+ 
+ 	return {
+ 		editor,
+ 		requestRender,
++		scrollToEntryId,
+ 		addAutocompleteProvider,
+ 		async init(): Promise<ExtensionUIContext> {
+ 			await new ExtensionUiController(ctx).initHooksAndCustomTools();
+@@ -59,6 +62,16 @@ describe("ExtensionUiController editor UI", () => {
+ 		expect(harness.requestRender).toHaveBeenCalledTimes(1);
+ 	});
+ 
++	it("forwards extension scrollToEntryId to the interactive transcript", async () => {
++		const harness = makeHarness();
++		const ui = await harness.init();
++
++		const result = ui.scrollToEntryId?.("entry-1", { align: "center" });
++
++		expect(result).toBe(true);
++		expect(harness.scrollToEntryId).toHaveBeenCalledWith("entry-1", { align: "center" });
++	});
++
+ 	it("bridges addAutocompleteProvider factories to the interactive mode context (#4919)", async () => {
+ 		const harness = makeHarness();
+ 		const ui = await harness.init();
+diff --git a/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts b/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts
+index 3cf407412..147fe535c 100644
+--- a/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts
++++ b/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts
+@@ -89,6 +89,7 @@ export class ExtensionUiController {
+ 			setStatus: (key, text) => this.setHookStatus(key, text),
+ 			setWorkingMessage: message => this.ctx.setWorkingMessage(message),
+ 			setWidget: (key, content, options) => this.setHookWidget(key, content, options),
++			scrollToEntryId: (entryId, options) => this.ctx.scrollToEntryId(entryId, options),
+ 			setTitle: title => setTerminalTitle(title),
+ 			custom: (factory, options) => this.showHookCustom(factory, options),
+ 			setEditorText: text => {
+diff --git a/packages/coding-agent/src/modes/controllers/input-controller.ts b/packages/coding-agent/src/modes/controllers/input-controller.ts
+index af4485175..c20e799d1 100644
+--- a/packages/coding-agent/src/modes/controllers/input-controller.ts
++++ b/packages/coding-agent/src/modes/controllers/input-controller.ts
+@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
+ import * as path from "node:path";
+ import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+ import type { ImageContent } from "@oh-my-pi/pi-ai";
+-import { type AutocompleteProvider, matchesKey, type SlashCommand } from "@oh-my-pi/pi-tui";
++import { type AutocompleteProvider, matchesKey, routeSgrMouseInput, type SlashCommand } from "@oh-my-pi/pi-tui";
+ import { $env, isEnoent, logger, sanitizeText } from "@oh-my-pi/pi-utils";
+ import { isSettingsInitialized, settings } from "../../config/settings";
+ import { resolveLocalRoot } from "../../internal-urls";
+@@ -175,6 +175,7 @@ export class InputController {
+ 	#focusedLeftTapListenerInstalled = false;
+ 	#btwBranchListenerInstalled = false;
+ 	#btwCopyListenerInstalled = false;
++	#transcriptScrollListenerInstalled = false;
+ 	// Tap counter for the double-← gesture; reset whenever a quiet gap
+ 	// (>= LEFT_DOUBLE_TAP_MAX_GAP_MS) starts a fresh sequence. See
+ 	// #detectLeftDoubleTap.
+@@ -266,6 +267,32 @@ export class InputController {
+ 				return { consume: true };
+ 			});
+ 		}
++		if (!this.#transcriptScrollListenerInstalled) {
++			this.#transcriptScrollListenerInstalled = true;
++			this.ctx.ui.addInputListener(data => {
++				const focused = typeof this.ctx.ui.getFocused === "function" ? this.ctx.ui.getFocused() : this.ctx.editor;
++				if (focused !== this.ctx.editor) return undefined;
++				if (data.startsWith("\x1b[<")) {
++					const handled = routeSgrMouseInput(data, event => {
++						if (event.wheel === null) return false;
++						this.ctx.scrollTranscriptRows(event.wheel * 3);
++						return true;
++					});
++					return handled ? { consume: true } : undefined;
++				}
++				if (matchesKey(data, "pageUp")) {
++					if (this.ctx.editor.getLines().length > 1) return undefined;
++					this.ctx.scrollTranscriptPage(-1);
++					return { consume: true };
++				}
++				if (matchesKey(data, "pageDown")) {
++					if (this.ctx.editor.getLines().length > 1) return undefined;
++					this.ctx.scrollTranscriptPage(1);
++					return { consume: true };
++				}
++				return undefined;
++			});
++		}
+ 		this.ctx.editor.onEscape = () => {
+ 			// Side-channel panels are the topmost view. Esc dismisses them before
+ 			// touching loop mode, maintenance, or the underlying main turn.
+diff --git a/packages/coding-agent/src/modes/interactive-mode.ts b/packages/coding-agent/src/modes/interactive-mode.ts
+index 27bb59275..7ff870a5d 100644
+--- a/packages/coding-agent/src/modes/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive-mode.ts
+@@ -133,6 +133,7 @@ import { CustomEditor } from "./components/custom-editor";
+ import { DynamicBorder } from "./components/dynamic-border";
+ import { ErrorBannerComponent } from "./components/error-banner";
+ import type { EvalExecutionComponent } from "./components/eval-execution";
++import { FixedTranscriptLayout } from "./components/fixed-transcript-layout";
+ import type { HookEditorComponent } from "./components/hook-editor";
+ import type { HookInputComponent } from "./components/hook-input";
+ import type { HookSelectorComponent, HookSelectorSlider } from "./components/hook-selector";
+@@ -425,6 +426,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 	hookWidgetContainerAbove: Container;
+ 	hookWidgetContainerBelow: Container;
+ 	statusLine: StatusLineComponent;
++	#fixedTranscriptLayout!: FixedTranscriptLayout;
+ 
+ 	isInitialized = false;
+ 	initialChatRendered = false;
+@@ -562,6 +564,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 	readonly #inputController: InputController;
+ 	readonly #selectorController: SelectorController;
+ 	readonly #focusController: SessionFocusController;
++	readonly #transcriptAnchors = new Map<string, Component>();
+ 	get viewSession(): AgentSession {
+ 		return this.#focusController.target ?? this.session;
+ 	}
+@@ -711,6 +714,24 @@ export class InteractiveMode implements InteractiveModeContext {
+ 		this.editorContainer.addChild(this.editor);
+ 		this.statusLine = new StatusLineComponent(session);
+ 		this.statusLine.setAutoCompactEnabled(session.autoCompactionEnabled);
++		this.#fixedTranscriptLayout = new FixedTranscriptLayout(
++			this.chatContainer,
++			[
++				this.pendingMessagesContainer,
++				this.todoContainer,
++				this.subagentContainer,
++				this.btwContainer,
++				this.omfgContainer,
++				this.errorBannerContainer,
++				this.modelCycleContainer,
++				this.statusContainer,
++				this.statusLine,
++				this.hookWidgetContainerAbove,
++				this.editorContainer,
++				this.hookWidgetContainerBelow,
++			],
++			() => this.ui.terminal.rows,
++		);
+ 		// Lazy provider — the top border rebuild coalesces to at most one
+ 		// invocation per painted frame instead of firing on every session event
+ 		// (#4145). The TUI throttles renders at ~30fps, so a long-running eval
+@@ -871,8 +892,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 		this.#welcomeComponent = undefined;
+ 
+ 		for (const warning of this.session.configWarnings) {
+-			this.ui.addChild(new Text(theme.fg("warning", `Warning: ${warning}`), 1, 0));
+-			this.ui.addChild(new Spacer(1));
++			this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warning}`), 1, 0));
+ 		}
+ 
+ 		if (!startupQuiet) {
+@@ -886,47 +906,28 @@ export class InteractiveMode implements InteractiveModeContext {
+ 			);
+ 
+ 			// Setup UI layout
+-			this.ui.addChild(new Spacer(1));
+-			this.ui.addChild(this.#welcomeComponent);
+-			this.ui.addChild(new Spacer(1));
++			this.chatContainer.addChild(this.#welcomeComponent);
+ 			if (!options.suppressWelcomeIntro) {
+ 				this.playWelcomeIntro();
+ 			}
+ 
+ 			// Add changelog if provided
+ 			if (this.#changelogMarkdown) {
+-				this.ui.addChild(new DynamicBorder());
++				this.chatContainer.addChild(new DynamicBorder());
+ 				if (settings.get("collapseChangelog")) {
+ 					const versionMatch = this.#changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
+ 					const latestVersion = versionMatch ? versionMatch[1] : this.#version;
+ 					const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
+-					this.ui.addChild(new Text(condensedText, 1, 0));
++					this.chatContainer.addChild(new Text(condensedText, 1, 0));
+ 				} else {
+-					this.ui.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
+-					this.ui.addChild(new Spacer(1));
+-					this.ui.addChild(new Markdown(this.#changelogMarkdown.trim(), 1, 0, getMarkdownTheme()));
+-					this.ui.addChild(new Spacer(1));
++					this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
++					this.chatContainer.addChild(new Markdown(this.#changelogMarkdown.trim(), 1, 0, getMarkdownTheme()));
+ 				}
+-				this.ui.addChild(new DynamicBorder());
++				this.chatContainer.addChild(new DynamicBorder());
+ 			}
+ 		}
+ 
+-		this.ui.addChild(this.chatContainer);
+-		this.ui.addChild(this.pendingMessagesContainer);
+-		this.ui.addChild(this.todoContainer);
+-		this.ui.addChild(this.subagentContainer);
+-		this.ui.addChild(this.btwContainer);
+-		this.ui.addChild(this.omfgContainer);
+-		this.ui.addChild(this.errorBannerContainer);
+-		this.ui.addChild(this.modelCycleContainer);
+-		// Working loader / transient status sits below the sticky todo + subagent
+-		// HUDs, just above the editor's hook-widget top margin — so it reads next to
+-		// the prompt while keeping the one-line gap above the editor.
+-		this.ui.addChild(this.statusContainer);
+-		this.ui.addChild(this.statusLine); // Only renders hook statuses (main status in editor border)
+-		this.ui.addChild(this.hookWidgetContainerAbove);
+-		this.ui.addChild(this.editorContainer);
+-		this.ui.addChild(this.hookWidgetContainerBelow);
++		this.ui.addChild(this.#fixedTranscriptLayout);
+ 		this.ui.setFocus(this.editor);
+ 
+ 		this.#inputController.setupKeyHandlers();
+@@ -948,6 +949,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 		// Start the UI. Cold `omp` launch opts into clearing on the first paint so
+ 		// the initial welcome frame does not append over the previous run's scrollback.
+ 		this.ui.start({ clearScrollback: options.clearInitialTerminalHistory === true });
++		this.ui.setMouseTrackingEnabled(true);
+ 		pushTerminalTitle();
+ 		setSessionTerminalTitle(this.sessionManager.getSessionName(), this.sessionManager.getCwd());
+ 		this.updateEditorBorderColor();
+@@ -1636,6 +1638,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 				}
+ 			}
+ 		}
++		this.clearTranscriptAnchors();
+ 		this.chatContainer.clear();
+ 		// Live display collapses to the compacted transcript tail unless the
+ 		// user opted into the full inline history; export/resume callers choose
+@@ -3622,6 +3625,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 		// InteractiveMode instance (e.g. test harnesses, headless re-init).
+ 		setAutoQaConsentHandler(null, null);
+ 		if (this.isInitialized) {
++			this.ui.setMouseTrackingEnabled(false);
+ 			this.ui.stop();
+ 			this.isInitialized = false;
+ 		}
+@@ -3731,6 +3735,43 @@ export class InteractiveMode implements InteractiveModeContext {
+ 	}
+ 
+ 	// UI helpers
++	#chatViewportRows(width: number): number | undefined {
++		void width;
++		return this.#fixedTranscriptLayout.getTranscriptRows();
++	}
++
++	registerTranscriptAnchor(entryId: string, component: Component): void {
++		this.#transcriptAnchors.set(entryId, component);
++	}
++
++	clearTranscriptAnchors(): void {
++		this.#transcriptAnchors.clear();
++	}
++
++	scrollTranscriptRows(delta: number): void {
++		this.chatContainer.scrollViewportRows(delta);
++		this.ui.requestRender();
++	}
++
++	scrollTranscriptPage(direction: -1 | 1): void {
++		const columns =
++			Number.isFinite(this.ui.terminal.columns) && this.ui.terminal.columns > 0 ? this.ui.terminal.columns : 80;
++		const rows = this.#chatViewportRows(columns) ?? 10;
++		this.scrollTranscriptRows(direction * Math.max(1, rows - 1));
++	}
++
++	scrollToEntryId(entryId: string, options?: { align?: "start" | "center" | "end" | "nearest" }): boolean {
++		let component = this.#transcriptAnchors.get(entryId);
++		if (!component) {
++			this.rebuildChatFromMessages();
++			component = this.#transcriptAnchors.get(entryId);
++		}
++		if (!component) return false;
++		this.chatContainer.scrollComponentIntoView(component, { align: options?.align });
++		this.ui.requestRender();
++		return true;
++	}
++
+ 	present(content: Component | readonly Component[]): void {
+ 		if (Array.isArray(content)) {
+ 			for (const item of content) this.#mountChatChild(item);
+@@ -3772,6 +3813,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 	}
+ 
+ 	resetTranscript(): void {
++		this.clearTranscriptAnchors();
+ 		this.chatContainer.dispose();
+ 		this.chatContainer.clear();
+ 	}
+@@ -3997,7 +4039,7 @@ export class InteractiveMode implements InteractiveModeContext {
+ 
+ 	addMessageToChat(
+ 		message: AgentMessage,
+-		options?: { populateHistory?: boolean; imageLinks?: readonly (string | undefined)[] },
++		options?: { populateHistory?: boolean; imageLinks?: readonly (string | undefined)[]; entryId?: string },
+ 	): Component[] {
+ 		return this.#uiHelpers.addMessageToChat(message, options);
+ 	}
+diff --git a/packages/coding-agent/src/modes/types.ts b/packages/coding-agent/src/modes/types.ts
+index 72293d2c1..51f26eb76 100644
+--- a/packages/coding-agent/src/modes/types.ts
++++ b/packages/coding-agent/src/modes/types.ts
+@@ -301,13 +301,18 @@ export interface InteractiveModeContext {
+ 	isKnownSlashCommand(text: string): boolean;
+ 	addMessageToChat(
+ 		message: AgentMessage,
+-		options?: { populateHistory?: boolean; imageLinks?: readonly (string | undefined)[] },
++		options?: { populateHistory?: boolean; imageLinks?: readonly (string | undefined)[]; entryId?: string },
+ 	): Component[];
+ 	renderSessionContext(
+ 		sessionContext: SessionContext,
+ 		options?: { updateFooter?: boolean; populateHistory?: boolean },
+ 	): void;
+ 	renderInitialMessages(options?: { preserveExistingChat?: boolean; clearTerminalHistory?: boolean }): void;
++	registerTranscriptAnchor(entryId: string, component: Component): void;
++	clearTranscriptAnchors(): void;
++	scrollTranscriptRows(delta: number): void;
++	scrollTranscriptPage(direction: -1 | 1): void;
++	scrollToEntryId(entryId: string, options?: { align?: "start" | "center" | "end" | "nearest" }): boolean;
+ 	getUserMessageText(message: Message): string;
+ 	findLastAssistantMessage(): AssistantMessage | undefined;
+ 	extractAssistantText(message: AssistantMessage): string;
+diff --git a/packages/coding-agent/src/modes/utils/ui-helpers.ts b/packages/coding-agent/src/modes/utils/ui-helpers.ts
+index 0839fb0a2..d6caf9380 100644
+--- a/packages/coding-agent/src/modes/utils/ui-helpers.ts
++++ b/packages/coding-agent/src/modes/utils/ui-helpers.ts
+@@ -120,7 +120,7 @@ export class UiHelpers {
+ 
+ 	addMessageToChat(
+ 		message: AgentMessage,
+-		options?: { populateHistory?: boolean; imageLinks?: readonly (string | undefined)[] },
++		options?: { populateHistory?: boolean; imageLinks?: readonly (string | undefined)[]; entryId?: string },
+ 	): Component[] {
+ 		switch (message.role) {
+ 			case "bashExecution": {
+@@ -241,6 +241,7 @@ export class UiHelpers {
+ 						);
+ 					const userComponent = new UserMessageComponent(textContent, isSynthetic, imageLinks);
+ 					this.ctx.chatContainer.addChild(userComponent);
++					if (options?.entryId) this.ctx.registerTranscriptAnchor(options.entryId, userComponent);
+ 					if (options?.populateHistory && message.role === "user" && !isSynthetic) {
+ 						this.ctx.editor.addToHistory(textContent);
+ 					}
+@@ -253,6 +254,7 @@ export class UiHelpers {
+ 					splitAssistantMessageToolTimeline(message).beforeTools,
+ 				);
+ 				this.ctx.chatContainer.addChild(assistantComponent);
++				if (options?.entryId) this.ctx.registerTranscriptAnchor(options.entryId, assistantComponent);
+ 				break;
+ 			}
+ 			case "toolResult": {
+@@ -351,14 +353,16 @@ export class UiHelpers {
+ 			previous.seal();
+ 		};
+ 		const messages = sessionContext.messages;
++		const messageEntryIds = sessionContext.messageEntryIds;
+ 		const count = messages.length;
+ 		for (let i = 0; i < count; i++) {
+ 			const message = messages[i]!;
++			const entryId = messageEntryIds?.[i];
+ 			if (message.role !== "toolResult") flushPendingUsage();
+ 			// Assistant messages need special handling for tool calls
+ 			if (message.role === "assistant") {
+ 				const timeline = splitAssistantMessageToolTimeline(message);
+-				this.ctx.addMessageToChat(message);
++				this.ctx.addMessageToChat(message, { entryId });
+ 				const lastChild = this.ctx.chatContainer.children[this.ctx.chatContainer.children.length - 1];
+ 				const assistantComponent = lastChild instanceof AssistantMessageComponent ? lastChild : undefined;
+ 				if (assistantComponent) {
+@@ -579,7 +583,7 @@ export class UiHelpers {
+ 				if (message.role === "user") resolveWaitingPoll();
+ 				if (message.role === "user") resolveTodoSnapshot();
+ 				// All other messages use standard rendering
+-				this.ctx.addMessageToChat(message, options);
++				this.ctx.addMessageToChat(message, { ...options, entryId });
+ 			}
+ 		}
+ 		flushPendingUsage();
+diff --git a/packages/coding-agent/src/session/session-context.ts b/packages/coding-agent/src/session/session-context.ts
+index 599963055..72cd090fc 100644
+--- a/packages/coding-agent/src/session/session-context.ts
++++ b/packages/coding-agent/src/session/session-context.ts
+@@ -56,6 +56,8 @@ function snapcompactHistoryBlockOptions(
+ 
+ export interface SessionContext {
+ 	messages: AgentMessage[];
++	/** Entry ids parallel to `messages`; undefined for synthesized messages that do not map to a single session entry. */
++	messageEntryIds?: Array<string | undefined>;
+ 	thinkingLevel?: string;
+ 	/** Configured thinking selector (`"auto"` or a concrete level) from the latest change. */
+ 	configuredThinkingLevel?: string;
+@@ -171,6 +173,7 @@ export function buildSessionContext(
+ 		// Explicitly null - return no messages (navigated to before first entry)
+ 		return {
+ 			messages: [],
++			messageEntryIds: [],
+ 			thinkingLevel: "off",
+ 			serviceTier: undefined,
+ 			models: {},
+@@ -189,6 +192,7 @@ export function buildSessionContext(
+ 	if (!leaf) {
+ 		return {
+ 			messages: [],
++			messageEntryIds: [],
+ 			thinkingLevel: "off",
+ 			serviceTier: undefined,
+ 			models: {},
+@@ -269,6 +273,7 @@ export function buildSessionContext(
+ 	// 2. Emit kept messages (from firstKeptEntryId up to compaction)
+ 	// 3. Emit messages after compaction
+ 	const messages: AgentMessage[] = [];
++	const messageEntryIds: Array<string | undefined> = [];
+ 	const cacheMissExplainedAt: boolean[] = [];
+ 	let pendingReset = false;
+ 	let currentMode = "none";
+@@ -288,8 +293,9 @@ export function buildSessionContext(
+ 		}
+ 	};
+ 
+-	const pushMessage = (msg: AgentMessage) => {
++	const pushMessage = (msg: AgentMessage, entryId?: string) => {
+ 		messages.push(msg);
++		messageEntryIds.push(entryId);
+ 		if (!options?.transcript) return;
+ 		if (msg.role === "assistant") {
+ 			const currentModel = `${msg.provider}/${msg.model}`;
+@@ -312,7 +318,7 @@ export function buildSessionContext(
+ 			) {
+ 				return;
+ 			}
+-			pushMessage(entry.message);
++			pushMessage(entry.message, entry.id);
+ 		} else if (entry.type === "custom_message") {
+ 			if (!isCustomMessageContent(entry.content)) return;
+ 			const normalized = normalizeCustomMessagePayload(entry);
+@@ -326,9 +332,10 @@ export function buildSessionContext(
+ 					entry.timestamp,
+ 					attribution,
+ 				),
++				entry.id,
+ 			);
+ 		} else if (entry.type === "branch_summary" && entry.summary) {
+-			pushMessage(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
++			pushMessage(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp), entry.id);
+ 		}
+ 	};
+ 
+@@ -485,6 +492,7 @@ export function buildSessionContext(
+ 				);
+ 			if (normalized.length === 0 && !options?.transcript) {
+ 				messages.splice(i, 1);
++				messageEntryIds.splice(i, 1);
+ 			} else {
+ 				const rewritten = { ...message, content: normalized };
+ 				if (options?.transcript) {
+@@ -500,6 +508,7 @@ export function buildSessionContext(
+ 
+ 	return {
+ 		messages,
++		messageEntryIds,
+ 		cacheMissExplainedAt: options?.transcript ? cacheMissExplainedAt : undefined,
+ 		thinkingLevel,
+ 		configuredThinkingLevel,
+diff --git a/packages/coding-agent/test/input-controller-keybindings.test.ts b/packages/coding-agent/test/input-controller-keybindings.test.ts
+index e0f1e9382..bb03da250 100644
+--- a/packages/coding-agent/test/input-controller-keybindings.test.ts
++++ b/packages/coding-agent/test/input-controller-keybindings.test.ts
+@@ -27,6 +27,7 @@ type FakeEditor = {
+ 	setText(text: string): void;
+ 	getText(): string;
+ 	getExpandedText(): string;
++	getLines(): string[];
+ 	addToHistory(text: string): void;
+ 	setActionKeys(action: string, keys: string[]): void;
+ 	setCustomKeyHandler(key: string, handler: () => void): void;
+@@ -73,6 +74,8 @@ async function createContext() {
+ 	const showModelSelector = vi.fn();
+ 	const requestRender = vi.fn();
+ 	const showError = vi.fn();
++	const scrollTranscriptPage = vi.fn();
++	const scrollTranscriptRows = vi.fn();
+ 	let focused: unknown;
+ 	const addInputListener = vi.fn((listener: InputListener) => {
+ 		void listener;
+@@ -109,6 +112,9 @@ async function createContext() {
+ 		getExpandedText() {
+ 			return editorText;
+ 		},
++		getLines() {
++			return editorText.split("\n");
++		},
+ 		addToHistory: vi.fn(),
+ 		pasteText(text: string) {
+ 			editorText += text;
+@@ -188,6 +194,8 @@ async function createContext() {
+ 		handleSTTToggle: vi.fn(),
+ 		showDebugSelector: vi.fn(),
+ 		showHistorySearch: vi.fn(),
++		scrollTranscriptPage,
++		scrollTranscriptRows,
+ 		toggleThinkingBlockVisibility: vi.fn(),
+ 		showModelSelector,
+ 		updateEditorBorderColor: vi.fn(),
+@@ -223,6 +231,8 @@ async function createContext() {
+ 			handleBtwCopyKey,
+ 			canCopyBtw,
+ 			showError,
++			scrollTranscriptPage,
++			scrollTranscriptRows,
+ 		},
+ 	};
+ }
+@@ -455,6 +465,40 @@ describe("InputController keybinding setup", () => {
+ 		expect(spies.handleBtwCopyKey).not.toHaveBeenCalled();
+ 	});
+ 
++	it("routes page keys to the transcript viewport when the editor has no multiline draft", async () => {
++		const { InputController, ctx, spies } = await createContext();
++		const controller = new InputController(ctx);
++
++		controller.setupKeyHandlers();
++		const result = dispatchInput(registeredInputListeners(spies.addInputListener), "\x1b[5~");
++
++		expect(result).toEqual({ consume: true });
++		expect(spies.scrollTranscriptPage).toHaveBeenCalledWith(-1);
++	});
++
++	it("routes SGR mouse wheel to the transcript viewport", async () => {
++		const { InputController, ctx, spies } = await createContext();
++		const controller = new InputController(ctx);
++
++		controller.setupKeyHandlers();
++		const result = dispatchInput(registeredInputListeners(spies.addInputListener), "\x1b[<65;10;4M");
++
++		expect(result).toEqual({ consume: true });
++		expect(spies.scrollTranscriptRows).toHaveBeenCalledWith(3);
++	});
++
++	it("lets page keys fall through while editing a multiline draft", async () => {
++		const { InputController, ctx, editor, spies } = await createContext();
++		editor.setText("line one\nline two");
++		const controller = new InputController(ctx);
++
++		controller.setupKeyHandlers();
++		const result = dispatchInput(registeredInputListeners(spies.addInputListener), "\x1b[5~");
++
++		expect(result).toBeUndefined();
++		expect(spies.scrollTranscriptPage).not.toHaveBeenCalled();
++	});
++
+ 	it("empty Enter aborts the active stream when queued messages are pending", async () => {
+ 		const { InputController, ctx, editor, spies } = await createContext();
+ 		const session = ctx.session as unknown as { isStreaming: boolean; queuedMessageCount: number };
+diff --git a/packages/coding-agent/test/modes/components/transcript-container.test.ts b/packages/coding-agent/test/modes/components/transcript-container.test.ts
+index 6a812f0ba..576c925b1 100644
+--- a/packages/coding-agent/test/modes/components/transcript-container.test.ts
++++ b/packages/coding-agent/test/modes/components/transcript-container.test.ts
+@@ -3,6 +3,7 @@ import { stripVTControlCharacters } from "node:util";
+ import type { AssistantMessage } from "@oh-my-pi/pi-ai";
+ import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+ import { AssistantMessageComponent } from "@oh-my-pi/pi-coding-agent/modes/components/assistant-message";
++import { FixedTranscriptLayout } from "@oh-my-pi/pi-coding-agent/modes/components/fixed-transcript-layout";
+ import { TranscriptContainer } from "@oh-my-pi/pi-coding-agent/modes/components/transcript-container";
+ import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+ import { USER_INTERRUPT_LABEL } from "@oh-my-pi/pi-coding-agent/session/messages";
+@@ -25,6 +26,25 @@ class MutableBlock implements Component {
+ 	}
+ }
+ 
++class WrappingBlock implements Component {
++	constructor(readonly text: string) {}
++	invalidate(): void {}
++	render(width: number): string[] {
++		const chunkWidth = Math.max(1, width);
++		const lines: string[] = [];
++		for (let start = 0; start < this.text.length; start += chunkWidth) {
++			lines.push(this.text.slice(start, start + chunkWidth));
++		}
++		return lines;
++	}
++}
++
++function transcriptTextWithoutScrollbar(line: string): string {
++	const plain = stripVTControlCharacters(line);
++	const last = plain.at(-1);
++	return last === "│" || last === "█" ? plain.slice(0, -1).trimEnd() : plain;
++}
++
+ // A block that can declare itself still-mutating (a foreground tool awaiting its
+ // result). The container must keep such a block in the repaintable live region —
+ // even with finalized blocks below it — until it finalizes.
+@@ -781,6 +801,138 @@ describe("TranscriptContainer renderViewportTail", () => {
+ 	});
+ });
+ 
++describe("TranscriptContainer fixed viewport", () => {
++	it("renders only the viewport tail when a row budget is configured", () => {
++		const container = new TranscriptContainer();
++		container.setViewportRowsProvider(() => 3);
++		container.addChild(new MutableBlock(["a"]));
++		container.addChild(new MutableBlock(["b"]));
++		container.addChild(new MutableBlock(["c"]));
++
++		expect(container.render(40)).toEqual(["b", "", "c"]);
++		expect(container.getNativeScrollbackLiveRegionStart()).toBe(0);
++	});
++
++	it("scrolls a component into the configured viewport", () => {
++		const container = new TranscriptContainer();
++		container.setViewportRowsProvider(() => 3);
++		const first = new MutableBlock(["first"]);
++		const target = new MutableBlock(["target-0", "target-1"]);
++		const tail = new MutableBlock(["tail"]);
++		container.addChild(first);
++		container.addChild(target);
++		container.addChild(tail);
++		container.render(40);
++
++		container.scrollComponentIntoView(target, { align: "start" });
++
++		expect(container.render(40)).toEqual(["target-0", "target-1", ""]);
++		expect(container.getNativeScrollbackLiveRegionStart()).toBe(0);
++	});
++
++	it("scrolls the configured viewport by rows", () => {
++		const container = new TranscriptContainer();
++		container.setViewportRowsProvider(() => 3);
++		container.addChild(new MutableBlock(["a"]));
++		container.addChild(new MutableBlock(["b"]));
++		container.addChild(new MutableBlock(["c"]));
++		container.render(40);
++
++		container.scrollViewportRows(-2);
++
++		expect(container.render(40)).toEqual(["a", "", "b"]);
++		expect(container.getNativeScrollbackLiveRegionStart()).toBe(0);
++	});
++
++	it("resumes following the tail after scrolling back to the bottom", () => {
++		const container = new TranscriptContainer();
++		container.setViewportRowsProvider(() => 3);
++		container.addChild(new MutableBlock(["a"]));
++		container.addChild(new MutableBlock(["b"]));
++		container.addChild(new MutableBlock(["c"]));
++		expect(container.render(40)).toEqual(["b", "", "c"]);
++
++		container.scrollViewportRows(-2);
++		expect(container.render(40)).toEqual(["a", "", "b"]);
++		container.scrollViewportRows(99);
++		expect(container.render(40)).toEqual(["b", "", "c"]);
++
++		container.addChild(new MutableBlock(["d"]));
++		expect(container.render(40)).toEqual(["c", "", "d"]);
++	});
++});
++
++describe("FixedTranscriptLayout", () => {
++	it("hides the internal scrollbar when the transcript fits the viewport", () => {
++		const transcript = new TranscriptContainer();
++		transcript.addChild(new MutableBlock(["only"]));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 4);
++
++		const lines = layout.render(8).map(line => stripVTControlCharacters(line));
++
++		expect(lines.slice(0, 3)).toEqual(["only", "", ""]);
++		expect(lines.join("")).not.toContain("│");
++		expect(lines.join("")).not.toContain("█");
++	});
++
++	it("renders an internal scrollbar and reserves its column for transcript wrapping", () => {
++		const transcript = new TranscriptContainer();
++		transcript.addChild(new WrappingBlock("abcde"));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 2);
++
++		const lines = layout.render(5).map(line => stripVTControlCharacters(line));
++
++		expect(lines).toEqual(["e   █", "> prompt"]);
++	});
++
++	it("moves the internal scrollbar thumb with the transcript viewport", () => {
++		const transcript = new TranscriptContainer();
++		transcript.addChild(new MutableBlock(["a"]));
++		transcript.addChild(new MutableBlock(["b"]));
++		transcript.addChild(new MutableBlock(["c"]));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 4);
++
++		const bottom = layout.render(8).map(line => stripVTControlCharacters(line));
++		expect(bottom.slice(0, 3).map(line => line.at(-1))).toEqual(["│", "│", "█"]);
++
++		transcript.scrollViewportRows(-2);
++		const top = layout.render(8).map(line => stripVTControlCharacters(line));
++		expect(top.slice(0, 3).map(line => line.at(-1))).toEqual(["█", "│", "│"]);
++		expect(top.at(-1)).toBe("> prompt");
++	});
++
++	it("keeps the bottom composer rows fixed at the terminal bottom", () => {
++		const transcript = new TranscriptContainer();
++		transcript.addChild(new MutableBlock(["a"]));
++		transcript.addChild(new MutableBlock(["b"]));
++		transcript.addChild(new MutableBlock(["c"]));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 5);
++
++		const lines = layout.render(40);
++
++		expect(lines).toHaveLength(5);
++		expect(lines.at(-1)).toBe("> prompt");
++		expect(lines.slice(0, -1).map(transcriptTextWithoutScrollbar)).toEqual(["", "b", "", "c"]);
++	});
++
++	it("scrolls transcript content without moving the composer row", () => {
++		const transcript = new TranscriptContainer();
++		const first = new MutableBlock(["first"]);
++		transcript.addChild(first);
++		transcript.addChild(new MutableBlock(["second"]));
++		transcript.addChild(new MutableBlock(["third"]));
++		const layout = new FixedTranscriptLayout(transcript, [new MutableBlock(["> prompt"])], () => 4);
++		layout.render(40);
++
++		transcript.scrollComponentIntoView(first, { align: "start" });
++		const lines = layout.render(40);
++
++		expect(lines).toHaveLength(4);
++		expect(lines.slice(0, -1).map(transcriptTextWithoutScrollbar)).toEqual(["first", "", "second"]);
++		expect(lines.at(-1)).toBe("> prompt");
++	});
++});
++
+ // A displaceable snapshot (todo/poll card): kept unfinalized only so a matching
+ // follow-up call can retract it. Mirrors ToolExecutionComponent.seal — sealing
+ // finalizes the block in place and it stops reporting displaceable. A pending
+diff --git a/packages/tui/src/tui.ts b/packages/tui/src/tui.ts
+index b938aa2d9..f9e847f83 100644
+--- a/packages/tui/src/tui.ts
++++ b/packages/tui/src/tui.ts
+@@ -1089,6 +1089,7 @@ export class TUI extends Container {
+ 	#altPreviousLines: string[] = [];
+ 	#altEnterWidth = 0;
+ 	#altEnterHeight = 0;
++	#baseMouseTrackingEnabled = false;
+ 	// Holds an alternate-screen exit until its replacement full paint can emit it
+ 	// atomically. It must survive a deferred Ghostty image frame.
+ 	#pendingAltExit = "";
+@@ -1587,6 +1588,13 @@ export class TUI extends Container {
+ 		};
+ 	}
+ 
++	setMouseTrackingEnabled(enabled: boolean): void {
++		if (this.#baseMouseTrackingEnabled === enabled) return;
++		this.#baseMouseTrackingEnabled = enabled;
++		if (this.#stopped || this.#altActive) return;
++		this.terminal.write(enabled ? MOUSE_TRACKING_ON : MOUSE_TRACKING_OFF);
++	}
++
+ 	removeInputListener(listener: InputListener): void {
+ 		this.#inputListeners.delete(listener);
+ 	}
+@@ -2722,7 +2730,7 @@ export class TUI extends Container {
+ 			this.#altEnterHeight = height;
+ 		} else if (!wantAlt && this.#altActive) {
+ 			const enhancementExit = this.#keyboardEnhancementExit();
+-			const exitSequence = `${MOUSE_TRACKING_OFF}${enhancementExit}\x1b[?1049l`;
++			const exitSequence = `${MOUSE_TRACKING_OFF}${enhancementExit}\x1b[?1049l${this.#baseMouseTrackingEnabled ? MOUSE_TRACKING_ON : ""}`;
+ 			// Session replacement can finish while a fullscreen selector is still
+ 			// covering the old normal buffer. Keep the overlay visible until the
+ 			// replacement is ready, then fuse the buffer restore into that full paint;
+diff --git a/packages/tui/test/mouse-tracking.test.ts b/packages/tui/test/mouse-tracking.test.ts
+new file mode 100644
+index 000000000..764565e52
+--- /dev/null
++++ b/packages/tui/test/mouse-tracking.test.ts
+@@ -0,0 +1,42 @@
++import { describe, expect, it } from "bun:test";
++import { TUI } from "@oh-my-pi/pi-tui";
++import type { Terminal, TerminalAppearance } from "@oh-my-pi/pi-tui/terminal";
++
++class RecordingTerminal implements Terminal {
++	writes: string[] = [];
++	columns = 80;
++	rows = 24;
++	kittyProtocolActive = false;
++	kittyEnableSequence = null;
++
++	start(_onInput: (data: string) => void, _onResize: () => void): void {}
++	stop(): void {}
++	async drainInput(): Promise<void> {}
++	write(data: string): void {
++		this.writes.push(data);
++	}
++	moveBy(_lines: number): void {}
++	hideCursor(): void {}
++	showCursor(): void {}
++	clearLine(): void {}
++	clearFromCursor(): void {}
++	clearScreen(): void {}
++	setTitle(_title: string): void {}
++	setProgress(_active: boolean): void {}
++	onAppearanceChange(_callback: (appearance: TerminalAppearance) => void): void {}
++	get appearance(): TerminalAppearance | undefined {
++		return undefined;
++	}
++}
++
++describe("TUI mouse tracking", () => {
++	it("can enable and disable SGR mouse tracking for the main screen", () => {
++		const terminal = new RecordingTerminal();
++		const tui = new TUI(terminal);
++
++		tui.setMouseTrackingEnabled(true);
++		tui.setMouseTrackingEnabled(false);
++
++		expect(terminal.writes).toEqual(["\x1b[?1000h\x1b[?1003h\x1b[?1006h", "\x1b[?1006l\x1b[?1003l\x1b[?1000l"]);
++	});
++});

@@ -58,10 +58,12 @@ npm run build
 
 项目正在建设 GitHub Release 分发流程，第一阶段仅支持 Windows 10/11 x64（Intel/AMD x86-64），不支持 Windows ARM64 和 32 位 Windows。
 
+当前源码与发布补丁已迁移到 Oh My Pi `17.0.1`；本机安装的二进制仍需在完成 native/OMP 重型构建后才会更新。
+
 本地生成测试包：
 
 ```powershell
-.\scripts\package-release.ps1 -BundleVersion 16.3.15-custom.1
+.\scripts\package-release.ps1 -BundleVersion 17.0.1-custom.1
 ```
 
 验证现有定制 `omp.exe` 的内嵌 native：

@@ -16,6 +16,8 @@
 
 三个组件必须作为一个 bundle 构建、发布、安装、升级和回滚，不能独立混用不同版本。
 
+当前构建基线为 Oh My Pi `17.0.1`：锁定 `can1357/oh-my-pi` 提交 `b0d04e517335ada4e00ef8dc93aad9f4d1be8d21`，再应用 `patches/oh-my-pi/17.0.1-release-windows-x64.patch`。这使 GitHub Actions 不依赖尚未推送的本地 fork 合并提交。
+
 ## 支持范围
 
 ### 支持
@@ -48,7 +50,8 @@
 ```mermaid
 flowchart LR
     A["message-nav-rail commit"] --> C["GitHub Actions Windows x64"]
-    B["Oh My Pi fork commit"] --> C
+    B["Oh My Pi upstream commit"] --> C
+    P["17.0.1 定制补丁"] --> C
     C --> D["构建 omp.exe"]
     C --> E["构建 message-nav-rail.mjs"]
     D --> F["native 自包含探测"]
@@ -71,14 +74,15 @@ v<upstream-version>-custom.<revision>
 示例：
 
 ```text
-v16.3.15-custom.1
-v16.3.15-custom.2
+v17.0.1-custom.1
+v17.0.1-custom.2
 ```
 
 每个版本必须锁定：
 
 - message-nav-rail commit。
-- Oh My Pi fork commit。
+- Oh My Pi upstream commit。
+- 定制补丁 SHA-256。
 - Oh My Pi 上游版本。
 - Bun 版本。
 - Rust toolchain。
@@ -91,7 +95,7 @@ v16.3.15-custom.2
 ### 理想结构：native 已内嵌
 
 ```text
-message-nav-rail-omp-16.3.15-custom.1-windows-x64.zip
+message-nav-rail-omp-17.0.1-custom.1-windows-x64.zip
 ├─ omp.exe
 ├─ extension/
 │  ├─ message-nav-rail.mjs
@@ -118,6 +122,8 @@ natives/
 不得在实验完成前假定只需要 `omp.exe`。
 
 ## native 自包含调查结论（2026-07-13）
+
+本节证据来自此前构建的 `16.3.15` 二进制，用于证明内嵌 native 的发布结构可行；17.0.1 尚未执行重型构建和独立探测，不能把下列版本输出视为 17.0.1 的验收结果。
 
 调查证据：
 
@@ -188,7 +194,7 @@ natives/
 第一版采用手动 `workflow_dispatch`，输入至少包括：
 
 - bundle version。
-- Oh My Pi fork commit。
+- Oh My Pi upstream commit。
 - 是否创建 prerelease。
 
 工作流必须：
@@ -221,7 +227,7 @@ natives/
 
 ### 阶段 6：首个 prerelease
 
-目标：发布 `v16.3.15-custom.1` 或当时对应的实际上游版本。
+目标：发布 `v17.0.1-custom.1`。
 
 正式稳定版的转换条件：
 
@@ -239,8 +245,8 @@ natives/
 - [x] 明确不支持 Windows ARM64 和 32 位 Windows。
 - [x] 明确第一版使用 GitHub prerelease。
 - [x] 明确组合版本格式 `v<upstream>-custom.<revision>`。
-- [ ] 确认首个 Release 使用的 Oh My Pi 版本。
-- [ ] 确认首个 Release 使用的 Oh My Pi fork commit。
+- [x] 确认首个 Release 使用的 Oh My Pi 版本：`17.0.1`。
+- [x] 确认首个 Release 使用的 Oh My Pi upstream commit：`b0d04e517335ada4e00ef8dc93aad9f4d1be8d21`。
 - [ ] 确认首个 Release 使用的 message-nav-rail commit。
 
 ### B. native 自包含性
@@ -302,7 +308,7 @@ natives/
 
 - [x] 新增 `.github/workflows/build-windows-x64.yml`。
 - [x] 使用 `workflow_dispatch`。
-- [x] 锁定 Oh My Pi fork commit。
+- [x] 锁定 Oh My Pi upstream commit，并应用版本化定制补丁。
 - [x] 固定 Bun 版本。
 - [ ] 固定 Rust MSVC toolchain。
 - [x] 运行定向测试和类型检查。

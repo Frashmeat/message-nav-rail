@@ -10,7 +10,7 @@
 
 ## 背景
 
-当前扩展已结合本地 Oh My Pi `16.3.15` 维护源码核对：
+当前扩展已结合本地 Oh My Pi `17.0.1` 维护源码核对：
 
 - 可用：`pi.on`、`pi.registerShortcut`、`ctx.ui.setWidget`、`ctx.ui.notify`
 - 权威消息来源：`ctx.sessionManager.getBranch()`。扩展用它重建小白点，并用真实 `entry.id` 做跳转锚点。
@@ -208,10 +208,12 @@ patches/
 
 `patches/oh-my-pi/README.md` 记录补丁目标、前置条件、源码定位关键词、应用/回滚流程和验收清单。
 
-注意：Oh My Pi fork 的活跃维护工作树已经迁移到 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `16.3.15`；安装版本必须通过 `omp.exe --version` 实时确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
+注意：Oh My Pi fork 的活跃维护工作树已经迁移到 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `17.0.1`，合并基线是 `upstream/main` 的 `b0d04e517`；截至 2026-07-17，已安装二进制仍是 `16.3.15`，尚未构建和部署 17.0.1。安装版本必须通过 `omp.exe --version` 实时确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
 
 当前第三版实现状态：
 
+- 已迁移到 Oh My Pi 17.0.1，并保留 17.x 的 Transcript native scrollback 压缩/重放逻辑；固定 viewport 模式单独禁止 native commit。
+- 17.x 的 legacy Pi bundled modules 已改为从 package exports 动态生成，本补丁不再修改已删除的静态 registry 文件。
 - 已给扩展 UI context 增加可选 `scrollToEntryId(entryId, options): boolean`。
 - 已给 transcript 渲染增加 `entryId -> Component` 锚点映射。
 - 已给 `TranscriptContainer` 增加内部 viewport，负责消息区域行滚动和锚点跳转。

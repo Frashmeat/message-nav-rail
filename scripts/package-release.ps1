@@ -20,7 +20,7 @@ $OmpBinary = (Resolve-Path -LiteralPath $OmpBinary).Path
 $OhMyPiRepo = (Resolve-Path -LiteralPath $OhMyPiRepo).Path
 $OutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 
-if ($BundleVersion -notmatch '^\d+\.\d+\.\d+-custom\.\d+$') { throw "BundleVersion must look like 16.3.15-custom.1" }
+if ($BundleVersion -notmatch '^\d+\.\d+\.\d+-custom\.\d+$') { throw "BundleVersion must look like 17.0.1-custom.1" }
 if (-not $SkipExtensionBuild) {
   & npm run build
   if ($LASTEXITCODE -ne 0) { throw "Extension build failed." }

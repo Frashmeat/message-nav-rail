@@ -56,9 +56,9 @@ npm run build
 
 ## Windows x64 预构建发布
 
-项目正在建设 GitHub Release 分发流程，第一阶段仅支持 Windows 10/11 x64（Intel/AMD x86-64），不支持 Windows ARM64 和 32 位 Windows。
+项目已发布首个 [GitHub prerelease `v17.0.1-custom.1`](https://github.com/Frashmeat/message-nav-rail/releases/tag/v17.0.1-custom.1)。第一阶段仅支持 Windows 10/11 x64（Intel/AMD x86-64），不支持 Windows ARM64 和 32 位 Windows。
 
-当前源码与发布补丁已迁移到 Oh My Pi `17.0.1`；本机安装的二进制仍需在完成 native/OMP 重型构建后才会更新。
+当前源码与发布补丁已迁移到 Oh My Pi `17.0.1`，GitHub Actions 已完成 Windows x64 native/OMP 构建与发布包校验。本机安装的二进制不会随 Release 自动更新，仍需下载发布包并运行安装器。
 
 本地生成测试包：
 

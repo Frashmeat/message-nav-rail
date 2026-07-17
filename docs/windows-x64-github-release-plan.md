@@ -20,6 +20,14 @@
 
 GitHub Windows runner 的 workspace 位于 `D:`，而 Bun 全局缓存通常位于 `C:`。Bun 1.3.14 存在编译目标跨盘移动失败的问题（Bun issue #28327），因此工作流将 `BUN_INSTALL_CACHE_DIR` 固定到 `${{ github.workspace }}/.tmp/bun-cache`，让下载、解压和最终缓存位于同一卷。
 
+## 发布状态（2026-07-17）
+
+- 构建 Action [`29553749190`](https://github.com/Frashmeat/message-nav-rail/actions/runs/29553749190) 已成功，源码提交为 `d7e9d6bee9512327fd6e8a195989c857a734c57e`。
+- [`v17.0.1-custom.1`](https://github.com/Frashmeat/message-nav-rail/releases/tag/v17.0.1-custom.1) 已发布为 prerelease。
+- Release 资产为 `message-nav-rail-omp-17.0.1-custom.1-windows-x64.zip` 及对应 `.zip.sha256`。
+- 发布 ZIP 的 SHA-256 为 `c3349134b0e52c7f144cc75e392b9e559b8bfb98eb225f5789b5a7107acf1f1a`。
+- 首个 prerelease 已完成构建、打包和静态完整性验收；独立 Windows 10/11 目标机的安装、升级与故障回滚验收仍待执行。
+
 ## 支持范围
 
 ### 支持
@@ -125,7 +133,7 @@ natives/
 
 ## native 自包含调查结论（2026-07-13）
 
-本节证据来自此前构建的 `16.3.15` 二进制，用于证明内嵌 native 的发布结构可行；17.0.1 尚未执行重型构建和独立探测，不能把下列版本输出视为 17.0.1 的验收结果。
+本节证据来自此前构建的 `16.3.15` 二进制，用于记录内嵌 native 发布结构的早期可行性调查；下列版本输出仅属于该历史验证，不是 17.0.1 的验收结果。
 
 调查证据：
 
@@ -143,6 +151,16 @@ natives/
 - 关键约束是：目标用户目录必须可写，安装/健康检查必须允许首次启动生成 `.omp/natives/<version>/`。
 - 我之前不知道但现在知道的是：Release 不需要额外携带 `.node` 文件，单个 `omp.exe` 能在无外部缓存条件下完成提取并执行真实 native 功能。
 - 基于以上，我的判断是：第一版 ZIP 使用“内嵌 native”结构；安装器需要验证提取结果，但无需独立安装或备份 native 文件。
+
+### 17.0.1 发布构建验收（2026-07-17）
+
+GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`omp.exe`、扩展、baseline/modern 内嵌 native 探测及 Release 打包。下载 Action Artifact 后完成了以下独立校验：
+
+- Artifact 外层 ZIP SHA-256 与 GitHub API digest 一致。
+- 发布 ZIP 与独立 `.sha256` 一致，SHA-256 为 `c3349134b0e52c7f144cc75e392b9e559b8bfb98eb225f5789b5a7107acf1f1a`。
+- bundle 包含 `omp.exe`、扩展、安装/卸载脚本、manifest、许可证、说明和内部校验清单。
+- `manifest.json` 记录 `bundleVersion=17.0.1-custom.1`、`upstreamVersion=17.0.1`、目标源码提交和 Oh My Pi 基线。
+- `SHA256SUMS.txt` 中 8 个文件的内部 SHA-256 全部复核通过。
 
 
 ## 分阶段实施
@@ -214,6 +232,8 @@ natives/
 
 完成条件：同一输入可稳定生成结构一致、哈希可验证的安装包。
 
+2026-07-17，run `29553749190` 已完成一次成功构建和 Artifact 校验。prerelease 由人工确认产物后使用 GitHub CLI 创建，自动创建 Release 的工作流仍未实现。
+
 ### 阶段 5：干净环境验收
 
 目标：在没有开发环境的 Windows x64 电脑或 VM 上验证最终体验。
@@ -230,6 +250,8 @@ natives/
 ### 阶段 6：首个 prerelease
 
 目标：发布 `v17.0.1-custom.1`。
+
+完成状态：已于 2026-07-17 发布为 GitHub prerelease；稳定版转换所需的独立目标机验收仍未完成。
 
 正式稳定版的转换条件：
 
@@ -326,16 +348,16 @@ natives/
 
 ### G. Release 内容
 
-- [ ] Release 标题明确“非官方定制构建”。
-- [ ] Release Notes 标明上游版本。
-- [ ] Release Notes 标明 Windows x64 限制。
-- [ ] Release Notes 标明 Intel/AMD x86-64 支持。
-- [ ] Release Notes 标明不支持 ARM64 和 32 位 Windows。
-- [ ] 上传 ZIP。
-- [ ] 上传独立 SHA-256 文件。
-- [ ] 上传或附带许可证。
-- [ ] 标记为 prerelease。
-- [ ] 公布安装和回滚命令。
+- [x] Release 标题明确“非官方定制构建”。
+- [x] Release Notes 标明上游版本。
+- [x] Release Notes 标明 Windows x64 限制。
+- [x] Release Notes 标明 Intel/AMD x86-64 支持。
+- [x] Release Notes 标明不支持 ARM64 和 32 位 Windows。
+- [x] 上传 ZIP。
+- [x] 上传独立 SHA-256 文件。
+- [x] 上传或附带许可证。
+- [x] 标记为 prerelease。
+- [x] 公布安装和回滚命令。
 
 ### H. 干净环境验收
 

@@ -60,7 +60,7 @@ npm run build
 
 项目已发布首个 [GitHub prerelease `v17.0.1-custom.1`](https://github.com/Frashmeat/message-nav-rail/releases/tag/v17.0.1-custom.1)。第一阶段仅支持 Windows 10/11 x64（Intel/AMD x86-64），不支持 Windows ARM64 和 32 位 Windows。
 
-当前源码与发布补丁已迁移到 Oh My Pi `17.0.1`，GitHub Actions 已完成 Windows x64 native/OMP 构建与发布包校验。本机安装的二进制不会随 Release 自动更新，仍需下载发布包并运行安装器。
+当前源码与发布补丁已迁移到 Oh My Pi `17.0.5`；上一份已发布并完成 Windows x64 native/OMP 构建校验的包仍是 `17.0.1-custom.1`。本机安装的二进制不会随源码升级或 Release 自动更新，仍需下载发布包并运行安装器。
 
 解压发布包后可先只验证 manifest、包内文件清单和全部 SHA-256，不执行安装：
 
@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ValidateOnly
 本地生成测试包：
 
 ```powershell
-.\scripts\package-release.ps1 -BundleVersion 17.0.1-custom.1
+.\scripts\package-release.ps1 -BundleVersion 17.0.5-custom.1
 ```
 
 验证现有定制 `omp.exe` 的内嵌 native：

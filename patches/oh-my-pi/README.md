@@ -35,13 +35,15 @@ F:\WebCode\message-nav-rail\ohmypi\oh-my-pi
 当前补丁与历史归档：
 
 ```text
+patches/oh-my-pi/17.0.5-scroll-to-entry-and-fixed-composer.patch
+patches/oh-my-pi/17.0.5-release-windows-x64.patch
 patches/oh-my-pi/17.0.1-scroll-to-entry-and-fixed-composer.patch
 patches/oh-my-pi/17.0.1-release-windows-x64.patch
 patches/oh-my-pi/16.3.15-scroll-to-entry-and-fixed-composer.patch
 patches/oh-my-pi/16.3.15-release-windows-x64.patch
 ```
 
-17.0.1 的两个补丁当前内容一致：都以 `can1357/oh-my-pi` 的 `b0d04e517335ada4e00ef8dc93aad9f4d1be8d21` 为基线。前者用于本地维护和审查，后者由 Windows x64 GitHub Actions 使用；保留两个语义化文件名，便于以后发布补丁与日常补丁出现差异时独立演进。
+当前 `17.0.5` 的两个补丁内容一致，均以 `can1357/oh-my-pi` 的稳定标签 `v17.0.5`（`9fd6e97113f5ed3a847e66d346970efdf8afcad9`）为基线。前者用于本地维护和审查，后者由 Windows x64 GitHub Actions 使用；`17.0.1` 和 `16.3.15` 文件仅作历史归档。
 
 扩展侧已经按能力检测适配：
 
@@ -66,7 +68,7 @@ patches/oh-my-pi/16.3.15-release-windows-x64.patch
 C:\Users\Administrator\.local\bin\omp.exe
 ```
 
-当前维护工作树 `packages/coding-agent/package.json` 标注的 `@oh-my-pi/pi-coding-agent` 版本是 `17.0.1`，合并基线是上游 `b0d04e517`。截至 2026-07-17，本机已安装的 `omp.exe` 仍为 `16.3.15`，尚未执行 17.0.1 的重型构建与部署。安装版本必须通过 `omp.exe --version` 实时确认；生成 patch 文件和替换 `omp.exe` 时，以实际源码版本为准。
+当前维护工作树 `packages/coding-agent/package.json` 标注的 `@oh-my-pi/pi-coding-agent` 版本是 `17.0.5`，合并基线是上游 `9fd6e9711`。本轮升级未执行 native/二进制重型构建或部署；本机安装的 `omp.exe` 上次于 2026-07-17 验证为 `16.3.15`。安装版本必须通过 `omp.exe --version` 实时确认；生成 patch 文件和替换 `omp.exe` 时，以实际源码版本为准。
 
 另外，旧工作树 `oh-my-pi` 的 Git 索引当前异常：`git status` 显示大量文件同时为 deleted/untracked，`git ls-files` 对已存在文件返回为空。不要基于该状态直接生成或提交 patch。
 
@@ -256,9 +258,9 @@ cd F:\WebCode\message-nav-rail
 
 ## 当前本地源码改动
 
-已在 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean` 的 `message-nav-rail` 分支把本地补丁迁移到 17.0.1：
+已在 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean` 的 `message-nav-rail` 分支把本地补丁迁移到 17.0.5：
 
-- 保留 17.x 新增的 Transcript native scrollback 压缩与重放逻辑；仅在固定 viewport 模式下把 native commit 边界固定为 0，避免消息切片进入终端原生 scrollback。
+- 采用 17.0.5 的 native live-region pinning 契约；固定布局从边界 0 开始报告 pinned，避免消息切片和固定输入区进入终端原生 scrollback，不恢复上游已经移除的旧 Transcript 压缩/重放实现。
 - 17.x 已删除静态 `legacy-pi-bundled-keys.ts` 和 `legacy-pi-bundled-registry.ts`，改为从 package exports 动态生成虚拟模块；本地补丁不再维护静态 bundled registry。
 - 上游合并后的定向测试覆盖 Transcript 原生模式、固定 viewport 模式、扩展跳转、键盘滚动、鼠标滚动和 session entry id 对齐。
 
@@ -400,8 +402,9 @@ git checkout -b local/message-nav-rail-patch
 
 ```powershell
 $version = (Get-Content packages/coding-agent/package.json -Raw | ConvertFrom-Json).version
+$baseRef = "v$version"
 $patchPath = "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
-$diffLines = @(git diff --binary upstream/main -- packages/coding-agent packages/tui)
+$diffLines = @(git diff --binary $baseRef -- packages/coding-agent packages/tui)
 $diffText = [string]::Join("`n", [string[]]$diffLines) + "`n"
 [IO.File]::WriteAllText($patchPath, $diffText, [Text.UTF8Encoding]::new($false))
 git apply --check --reverse $patchPath
@@ -413,7 +416,7 @@ git apply --check --reverse $patchPath
 
 ```powershell
 cd <oh-my-pi-source>
-$version = "17.0.1" # 必须与目标源码版本一致
+$version = "17.0.5" # 必须与目标源码版本一致
 git apply "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
 ```
 
@@ -431,7 +434,7 @@ Copy-Item <backup-omp.exe> C:\Users\Administrator\.local\bin\omp.exe -Force
 
 ```powershell
 cd <oh-my-pi-source>
-$version = "17.0.1" # 必须与当前补丁版本一致
+$version = "17.0.5" # 必须与当前补丁版本一致
 git apply -R "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
 ```
 

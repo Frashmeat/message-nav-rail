@@ -77,14 +77,6 @@ function prop(obj: unknown, key: string): unknown {
   return (obj as Record<string, unknown>)[key];
 }
 
-function inputText(event: unknown): string {
-  const text = prop(event, "text") ?? prop(event, "content");
-  if (typeof text === "string") return text;
-  const message = prop(event, "message");
-  const messageText = prop(message, "text") ?? prop(message, "content");
-  return typeof messageText === "string" ? messageText : extractContentText(messageText);
-}
-
 function eventRole(event: unknown): string {
   const role = prop(prop(event, "message"), "role") ?? prop(event, "role");
   return typeof role === "string" ? role : "";
@@ -117,9 +109,9 @@ export default function messageNavRail(pi: ExtensionAPI) {
 
   let state: RailState = { ...INITIAL_STATE };
   let currentCtx: ExtensionContext | null = null;
-  let terminalInputCtx: ExtensionContext | null = null;
+  let terminalInputUI: ExtensionContext["ui"] | null = null;
   let unsubscribeTerminalInput: (() => void) | undefined;
-  let pendingUserInputText: string | null = null;
+  let startedUserMessageText: string | null = null;
   const seenEntryIds = new Set<string>();
   const seenEventIds = new Set<string>();
   const refreshTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -170,10 +162,10 @@ export default function messageNavRail(pi: ExtensionAPI) {
   }
 
   function ensureTerminalInputListener(ctx: ExtensionContext) {
-    if (terminalInputCtx === ctx) return;
+    if (terminalInputUI === ctx.ui) return;
     unsubscribeTerminalInput?.();
     unsubscribeTerminalInput = undefined;
-    terminalInputCtx = ctx;
+    terminalInputUI = ctx.ui;
 
     const onTerminalInput = (ctx.ui as ExtensionContext["ui"] & TerminalInputCapableUI)
       .onTerminalInput;
@@ -187,6 +179,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
     } catch (e) {
       pi.logger?.warn("message-nav-rail terminal input listener failed", e);
       unsubscribeTerminalInput = undefined;
+      terminalInputUI = null;
     }
   }
 
@@ -197,11 +190,11 @@ export default function messageNavRail(pi: ExtensionAPI) {
 
   function resetContextResources() {
     clearRefreshTimers();
-    pendingUserInputText = null;
+    startedUserMessageText = null;
     seenEventIds.clear();
     unsubscribeTerminalInput?.();
     unsubscribeTerminalInput = undefined;
-    terminalInputCtx = null;
+    terminalInputUI = null;
   }
 
   function replaceStateFromEntries(branch: SessionEntryLike[]): RailMessage[] {
@@ -286,24 +279,24 @@ export default function messageNavRail(pi: ExtensionAPI) {
   function appendUserMessageIfMissing(
     text: string,
     eventId?: string,
-    source: "input" | "message_end" = "message_end"
+    source: "message_start" | "message_end" = "message_end"
   ) {
     if (text.trim().length === 0) return;
     if (eventId && seenEventIds.has(eventId)) {
-      if (source === "message_end" && pendingUserInputText === text) {
-        pendingUserInputText = null;
+      if (source === "message_end" && startedUserMessageText === text) {
+        startedUserMessageText = null;
       }
       return;
     }
     if (eventId) seenEventIds.add(eventId);
 
     if (source === "message_end") {
-      const matchesPendingInput = pendingUserInputText === text;
-      pendingUserInputText = null;
-      if (matchesPendingInput) return;
+      const matchesStartedMessage = startedUserMessageText === text;
+      startedUserMessageText = null;
+      if (matchesStartedMessage) return;
     }
 
-    if (source === "input") pendingUserInputText = text;
+    if (source === "message_start") startedUserMessageText = text;
     const preview = truncate(text, PREVIEW_LEN);
     const last = state.messages.at(-1);
     if (
@@ -313,6 +306,19 @@ export default function messageNavRail(pi: ExtensionAPI) {
       last.preview === preview
     ) return;
     state = onInput(state, text);
+  }
+
+  async function rebuildForSession(ctx: ExtensionContext, logLabel: string) {
+    resetContextResources();
+    currentCtx = ctx;
+    ensureTerminalInputListener(ctx);
+    try {
+      replaceStateFromBranch(ctx);
+      rerender();
+      scheduleBranchRefresh(ctx);
+    } catch (e) {
+      pi.logger?.error(`${logLabel} rebuild failed`, e);
+    }
   }
 
   function makeShortcutCtx(): ShortcutContext {
@@ -355,16 +361,11 @@ export default function messageNavRail(pi: ExtensionAPI) {
     return false;
   }
 
-  pi.on("input", async (event, ctx) => {
+  pi.on("input", async (_event, ctx) => {
     currentCtx = ctx;
     ensureTerminalInputListener(ctx);
     try {
       tryRefreshFromBranch(ctx, false);
-      appendUserMessageIfMissing(
-        inputText(event),
-        optionalEventMessageId(event),
-        "input"
-      );
       rerender();
       scheduleBranchRefresh(ctx);
     } catch (e) {
@@ -377,8 +378,27 @@ export default function messageNavRail(pi: ExtensionAPI) {
     ensureTerminalInputListener(ctx);
     try {
       const role = eventRole(event);
-      if (role !== "assistant") return;
+      if (role !== "user" && role !== "assistant") return;
       const refresh = refreshFromBranch(ctx, false);
+      if (role === "user") {
+        const text = eventContentText(event);
+        const eventId = optionalEventMessageId(event);
+        const preview = truncate(text, PREVIEW_LEN);
+        const alreadyAnchored =
+          (eventId !== undefined && state.messages.some((message) => message.id === eventId)) ||
+          refresh.addedMessages.some(
+            (message) => message.type === "user" && message.preview === preview
+          );
+        if (text.trim().length > 0) startedUserMessageText = text;
+        if (alreadyAnchored) {
+          if (eventId) seenEventIds.add(eventId);
+        } else {
+          appendUserMessageIfMissing(text, eventId, "message_start");
+        }
+        rerender();
+        scheduleBranchRefresh(ctx);
+        return;
+      }
       const eventId = optionalEventMessageId(event);
       const alreadyAnchored =
         (eventId !== undefined &&
@@ -419,11 +439,14 @@ export default function messageNavRail(pi: ExtensionAPI) {
     currentCtx = ctx;
     ensureTerminalInputListener(ctx);
     try {
-      tryRefreshFromBranch(ctx, false);
       const role = eventRole(event);
       if (role === "user") {
+        const text = eventContentText(event);
+        if (startedUserMessageText !== text) {
+          tryRefreshFromBranch(ctx, false);
+        }
         appendUserMessageIfMissing(
-          eventContentText(event),
+          text,
           optionalEventMessageId(event),
           "message_end"
         );
@@ -432,6 +455,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
         return;
       }
       if (role !== "assistant") return;
+      tryRefreshFromBranch(ctx, false);
       const text = eventContentText(event);
       const last = state.messages.at(-1);
       if (!state.streamingAssistantId && last?.type === "assistant" && last.preview === truncate(text, PREVIEW_LEN)) {
@@ -457,16 +481,11 @@ export default function messageNavRail(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    resetContextResources();
-    currentCtx = ctx;
-    ensureTerminalInputListener(ctx);
-    try {
-      replaceStateFromBranch(ctx);
-      rerender();
-      scheduleBranchRefresh(ctx);
-    } catch (e) {
-      pi.logger?.error("session_start rebuild failed", e);
-    }
+    await rebuildForSession(ctx, "session_start");
+  });
+
+  pi.on("session_switch", async (_event, ctx) => {
+    await rebuildForSession(ctx, "session_switch");
   });
 
   try {

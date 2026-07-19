@@ -81,13 +81,16 @@ message-nav-rail 定制 Oh My Pi $BundleVersion
 
 这是非官方定制构建，仅支持 Windows 10/11 x64（Intel/AMD x86-64）。
 
+仅校验 manifest、包内文件清单和 SHA-256：
+  powershell -ExecutionPolicy Bypass -File .\install.ps1 -ValidateOnly
+
 安装：
   powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 回滚/卸载：
   powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -RestorePrevious
 
-安装前请关闭所有 omp.exe 进程。安装器会校验文件、备份当前版本并在失败时自动回滚。
+安装前请关闭所有 omp.exe 进程。安装器会完整校验文件、备份当前版本并在失败时自动回滚；覆盖升级恢复上一版时会同时恢复其安装清单。
 "@ | Set-Content -LiteralPath (Join-Path $stageDir "README.txt") -Encoding UTF8
 
 $hashFiles = Get-ChildItem -LiteralPath $stageDir -Recurse -File | Where-Object Name -ne "SHA256SUMS.txt" | Sort-Object FullName

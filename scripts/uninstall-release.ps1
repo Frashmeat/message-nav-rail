@@ -74,5 +74,10 @@ if (Test-Path -LiteralPath $backupOmp) {
 }
 
 if (-not $keepExtensionRoot -and (Test-Path -LiteralPath $extensionRoot)) { Remove-Item -LiteralPath $extensionRoot -Recurse -Force }
-Remove-Item -LiteralPath $statePath -Force
+$backupState = Join-Path $backupDir "installation.json"
+if (Test-Path -LiteralPath $backupState) {
+  Copy-Item -LiteralPath $backupState -Destination $statePath -Force
+} else {
+  Remove-Item -LiteralPath $statePath -Force
+}
 Write-Host "Restored the state captured before bundle $($state.bundleVersion)."

@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 90
     env:
       BUN_VERSION: "1.3.14"
+      BUNDLE_VERSION: ${{ inputs.bundle_version }}
+      OH_MY_PI_REF: ${{ inputs.oh_my_pi_ref }}
       # Bun 1.3.14 在 Windows 跨盘移动编译目标时会失败；让缓存与 D: workspace 保持同盘。
       BUN_INSTALL_CACHE_DIR: ${{ github.workspace }}/.tmp/bun-cache
       OMP_DIR: ${{ github.workspace }}/.tmp/oh-my-pi
@@ -44,11 +46,26 @@ jobs:
       - name: 检出 Oh My Pi 上游并应用定制补丁
         shell: pwsh
         run: |
+          $ref = $env:OH_MY_PI_REF
+          if ([string]::IsNullOrWhiteSpace($ref)) {
+            throw "oh_my_pi_ref must not be empty"
+          }
+          if ($ref -notmatch '^[a-fA-F0-9]{7,40}$') {
+            git check-ref-format --branch $ref
+            if ($LASTEXITCODE -ne 0) {
+              throw "Invalid Oh My Pi commit or branch: $ref"
+            }
+          }
           git clone --filter=blob:none https://github.com/can1357/oh-my-pi.git "$env:OMP_DIR"
-          git -C "$env:OMP_DIR" checkout --detach "${{ inputs.oh_my_pi_ref }}"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to clone Oh My Pi" }
+          git -C "$env:OMP_DIR" checkout --detach $ref
+          if ($LASTEXITCODE -ne 0) { throw "Failed to checkout Oh My Pi ref: $ref" }
           git -C "$env:OMP_DIR" apply --check "$env:RELEASE_PATCH"
+          if ($LASTEXITCODE -ne 0) { throw "Oh My Pi release patch check failed" }
           git -C "$env:OMP_DIR" apply "$env:RELEASE_PATCH"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to apply Oh My Pi release patch" }
           git -C "$env:OMP_DIR" diff --check
+          if ($LASTEXITCODE -ne 0) { throw "Oh My Pi patched diff contains errors" }
 
       - name: 安装扩展依赖
         run: npm ci
@@ -89,17 +106,17 @@ jobs:
         shell: pwsh
         run: |
           .\scripts\package-release.ps1 `
-            -BundleVersion "${{ inputs.bundle_version }}" `
+            -BundleVersion $env:BUNDLE_VERSION `
             -OmpBinary "$env:OMP_DIR\packages\coding-agent\dist\omp.exe" `
             -OhMyPiRepo "$env:OMP_DIR" `
-            -OhMyPiBaseRef "${{ inputs.oh_my_pi_ref }}" `
+            -OhMyPiBaseRef $env:OH_MY_PI_REF `
             -ReleasePatch "$env:RELEASE_PATCH" `
             -SkipExtensionBuild
 
       - name: 上传 Windows x64 安装包
         uses: actions/upload-artifact@v4
         with:
-          name: message-nav-rail-omp-${{ inputs.bundle_version }}-windows-x64
+          name: message-nav-rail-omp-${{ env.BUNDLE_VERSION }}-windows-x64
           path: |
             .tmp/release/*.zip
             .tmp/release/*.sha256

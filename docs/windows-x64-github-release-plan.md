@@ -195,9 +195,12 @@ GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`o
 安装事务：
 
 ```text
-预检查 → SHA-256 校验 → 备份 → 临时复制 → 原子替换
+预检查 → manifest schema 校验 → 包内文件与 SHA-256 清单一一核对
+→ 备份 → 临时复制 → 原子替换
 → 安装扩展/native → 启动探测 → 写入安装清单
 ```
+
+解压后可先运行 `install.ps1 -ValidateOnly`，只验证 manifest、文件覆盖率、路径安全和 SHA-256，不修改本机状态。覆盖升级会备份旧 `installation.json`；失败回滚或手动恢复上一版时一并恢复该清单，保留连续回滚链。
 
 任何后续步骤失败时：
 
@@ -216,6 +219,8 @@ GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`o
 - bundle version。
 - Oh My Pi upstream commit。
 - 是否创建 prerelease。
+
+所有 dispatch 输入必须先映射为步骤环境变量，再作为单独参数传给 PowerShell 或 Git；禁止把 `${{ inputs.* }}` 直接插值进 `run` 代码块。Oh My Pi ref 在 checkout 前按 commit 或合法 branch 校验。
 
 工作流必须：
 
@@ -304,7 +309,8 @@ GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`o
 - [x] 新增 `scripts/install-release.ps1`。
 - [x] 检查 Windows、OS x64 和 64 位 PowerShell。
 - [x] 检查安装包结构和 manifest schema。
-- [x] 校验所有 SHA-256。
+- [x] 校验包内文件与 `SHA256SUMS.txt` 一一对应，拒绝遗漏、重复和目录越界条目。
+- [x] 支持 `-ValidateOnly` 只执行 manifest 和 SHA-256 校验。
 - [ ] 检查目标目录写权限。
 - [x] 检查 `omp.exe` 是否正在运行。
 - [x] 备份旧 `omp.exe`。
@@ -316,6 +322,7 @@ GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`o
 - [x] 执行真实 native 探测。
 - [x] 保存 `installation.json`。
 - [x] 安装失败自动回滚。
+- [x] 失败回滚时恢复上一版 `installation.json`。
 - [ ] 安装输出不泄露敏感路径或凭据。
 
 ### E. 卸载与回滚
@@ -323,7 +330,8 @@ GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`o
 - [x] 新增 `scripts/uninstall-release.ps1`。
 - [x] 支持恢复最近一次备份。
 - [x] 恢复二进制和扩展；native 由内嵌二进制按版本自行提取。
-- [x] 支持仅移除定制扩展。
+- [ ] 支持仅移除定制扩展；当前卸载入口要求 `-RestorePrevious` 并恢复完整安装前状态。
+- [x] 覆盖升级回滚时恢复上一版 `installation.json`，保留连续回滚链。
 - [ ] 保留备份的默认行为明确。
 - [x] 没有可用备份时拒绝破坏性恢复。
 - [x] 回滚后重新执行健康检查。
@@ -332,6 +340,8 @@ GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`o
 
 - [x] 新增 `.github/workflows/build-windows-x64.yml`。
 - [x] 使用 `workflow_dispatch`。
+- [x] dispatch 输入通过环境变量传递，不直接插值进 PowerShell `run` 块。
+- [x] checkout 前校验 Oh My Pi commit/branch ref。
 - [x] 锁定 Oh My Pi upstream commit，并应用版本化定制补丁。
 - [x] 固定 Bun 版本。
 - [ ] 固定 Rust MSVC toolchain。
@@ -417,9 +427,8 @@ GitHub Actions run `29553749190` 已在 Windows x64 runner 上完成 native、`o
 - 人为制造安装失败后能够自动恢复。
 - 手动卸载能够恢复安装前版本。
 - 回滚后旧版本通过健康检查。
+- 覆盖升级回滚后恢复上一版安装清单，并能继续执行更早版本的受管回滚。
 
 ## 当前阶段
 
-当前处于 **阶段 1：范围与基线**。
-
-转入阶段 2 的条件：确认本方案作为后续实施基线，并开始 native 自包含性探测。
+当前首个 prerelease 已完成，处于 **阶段 5：独立 Windows x64 干净环境验收**；正式稳定版转换条件仍未全部满足。

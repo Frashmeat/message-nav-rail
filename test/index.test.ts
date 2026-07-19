@@ -33,6 +33,8 @@ interface MockPiHandle {
   fireTerminalInput: (data: string) => { consume?: boolean } | undefined;
   fireShortcut: (accel: string) => void;
   hasShortcut: (accel: string) => boolean;
+  hasHandler: (event: string) => boolean;
+  terminalListenerCounts: () => { subscriptions: number; unsubscriptions: number };
 }
 
 
@@ -42,14 +44,23 @@ function createMockPi(): MockPiHandle {
   const widgets: RecordedWidget[] = [];
   const notifications: Array<{ msg: string; level?: string }> = [];
   const terminalInputHandlers = new Set<(data: string) => { consume?: boolean } | undefined>();
+  let terminalInputSubscriptions = 0;
+  let terminalInputUnsubscriptions = 0;
   const errors: string[] = [];
 
   const ui: MockUI = {
     setWidget: (key, content, opts) =>
       widgets.push({ key, content: content ?? [], opts }),
     onTerminalInput: (handler) => {
+      terminalInputSubscriptions++;
       terminalInputHandlers.add(handler);
-      return () => { terminalInputHandlers.delete(handler); };
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        terminalInputUnsubscriptions++;
+        terminalInputHandlers.delete(handler);
+      };
     },
     notify: (msg, level) => notifications.push({ msg, level }),
   };
@@ -105,6 +116,11 @@ function createMockPi(): MockPiHandle {
     fireTerminalInput,
     fireShortcut,
     hasShortcut,
+    hasHandler: (event) => handlers.has(event),
+    terminalListenerCounts: () => ({
+      subscriptions: terminalInputSubscriptions,
+      unsubscriptions: terminalInputUnsubscriptions,
+    }),
   };
 }
 
@@ -148,6 +164,12 @@ describe("index 集成", () => {
     ctx = makeCtx(mock.ui);
   });
 
+  async function emitUserMessage(text: string, targetCtx: MockCtx = ctx) {
+    await mock.emit("input", mkInputEvent(text), targetCtx);
+    await mock.emit("message_start", mkMessageStartEvent("user", text), targetCtx);
+    await mock.emit("message_end", mkMessageEndEvent("user", text), targetCtx);
+  }
+
   it("setLabel 调用", () => {
     assert.equal(mock.label(), "消息导航栏");
   });
@@ -164,8 +186,10 @@ describe("index 集成", () => {
     }
   });
 
-  it("input 事件渲染用户小点", async () => {
+  it("input 等待宿主确认，message_start user 后渲染用户小点", async () => {
     await mock.emit("input", mkInputEvent("你好"), ctx);
+    assert.equal(mock.widgets.at(-1)!.content[0], "");
+    await mock.emit("message_start", mkMessageStartEvent("user", "你好"), ctx);
     const last = mock.widgets.at(-1)!;
     assert.equal(last.key, "message-nav-rail");
     assert.equal(last.content[0], "●");
@@ -177,8 +201,8 @@ describe("index 集成", () => {
     assert.equal(mock.widgets.at(-1)!.content[0], "");
   });
 
-  it("完整对话流: input → start → update → end", async () => {
-    await mock.emit("input", mkInputEvent("问题"), ctx);
+  it("完整对话流: user start/end → assistant start/update/end", async () => {
+    await emitUserMessage("问题");
     await mock.emit("message_start", mkMessageStartEvent("assistant", [{ type: "text", text: "" }]), ctx);
     await mock.emit("message_end", mkMessageEndEvent("assistant", [{ type: "text", text: "最终答案" }]), ctx);
     const last = mock.widgets.at(-1)!;
@@ -199,10 +223,10 @@ describe("index 集成", () => {
     assert.equal(mock.widgets.at(-1)!.content[0], "●");
   });
 
-  it("相同长前缀的连续 input 不会误去重", async () => {
+  it("相同长前缀的连续用户消息不会误去重", async () => {
     const prefix = "a".repeat(80);
-    await mock.emit("input", mkInputEvent(`${prefix}1`), ctx);
-    await mock.emit("input", mkInputEvent(`${prefix}2`), ctx);
+    await emitUserMessage(`${prefix}1`);
+    await emitUserMessage(`${prefix}2`);
     assert.equal(mock.widgets.at(-1)!.content[0], "● ●");
   });
 
@@ -237,6 +261,16 @@ describe("index 集成", () => {
     await mock.emit("input", mkInputEvent("问题"), ctx);
     await mock.emit(
       "message_start",
+      mkFlatMessageEvent("message_start", "user", "问题"),
+      ctx
+    );
+    await mock.emit(
+      "message_end",
+      mkFlatMessageEvent("message_end", "user", "问题"),
+      ctx
+    );
+    await mock.emit(
+      "message_start",
       mkFlatMessageEvent("message_start", "assistant", ""),
       ctx
     );
@@ -259,7 +293,7 @@ describe("index 集成", () => {
   });
 
   it("streaming 中显示半填充符号", async () => {
-    await mock.emit("input", mkInputEvent("q"), ctx);
+    await emitUserMessage("q");
     await mock.emit("message_start", mkMessageStartEvent("assistant", []), ctx);
     const last = mock.widgets.at(-1)!;
     assert.equal(last.content[0], "● ◐");
@@ -290,9 +324,26 @@ describe("index 集成", () => {
     assert.match(mock.notifications.at(-1)!.msg, /正在回答/);
   });
 
-  it("message_start 忽略 user 角色", async () => {
+  it("非空历史会话中 message_end 不会清除尚未持久化的用户消息", async () => {
+    const branch = [
+      { id: "old-user", type: "message", message: { role: "user", content: "历史问题" } },
+    ];
+    const branchCtx: MockCtx = {
+      ui: mock.ui,
+      sessionManager: { getBranch: () => branch },
+    };
+    await mock.emit("session_start", {}, branchCtx);
+    await mock.emit("message_start", mkMessageStartEvent("user", "新问题"), branchCtx);
+    assert.equal(mock.widgets.at(-1)!.content[0], "● ●");
+
+    await mock.emit("message_end", mkMessageEndEvent("user", "新问题"), branchCtx);
+
+    assert.equal(mock.widgets.at(-1)!.content[0], "● ●");
+  });
+
+  it("message_start 接受 user 角色作为权威消息来源", async () => {
     await mock.emit("message_start", mkMessageStartEvent("user", "hi"), ctx);
-    assert.equal(mock.widgets.length, 0);
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
   });
 
   it("message_start 只接受 assistant 角色", async () => {
@@ -329,6 +380,62 @@ describe("index 集成", () => {
     mock.fireShortcut("alt+right");
     mock.fireShortcut("alt+/");
     assert.match(mock.notifications.at(-1)!.msg, /历史问题/);
+  });
+
+  it("session_switch 会立即清空已切换离开的会话", async () => {
+    const branch = [
+      { id: "old-user", type: "message", message: { role: "user", content: "旧会话" } },
+    ];
+    const sessionManager = { getBranch: () => branch };
+    await mock.emit("session_start", {}, { ui: mock.ui, sessionManager });
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
+
+    branch.length = 0;
+    assert.equal(mock.hasHandler("session_switch"), true);
+    await mock.emit("session_switch", { type: "session_switch", reason: "new" }, {
+      ui: mock.ui,
+      sessionManager,
+    });
+
+    assert.equal(mock.widgets.at(-1)!.content[0], "");
+
+    branch.push({
+      id: "new-user",
+      type: "message",
+      message: { role: "user", content: "新会话" },
+    });
+    await mock.emit("session_switch", { type: "session_switch", reason: "resume" }, {
+      ui: mock.ui,
+      sessionManager,
+    });
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
+    assert.deepEqual(mock.terminalListenerCounts(), {
+      subscriptions: 3,
+      unsubscriptions: 2,
+    });
+  });
+
+  it("本地命令 input 不会在空会话留下幽灵节点", async () => {
+    await mock.emit("session_start", {}, ctx);
+    await mock.emit("input", { type: "input", text: "/help", source: "interactive" }, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(mock.widgets.at(-1)!.content[0], "");
+  });
+
+  it("每个事件使用新 ctx 时不会重复注册终端输入监听器", async () => {
+    const sessionManager = { getBranch: () => [] };
+    const freshCtx = (): MockCtx => ({ ui: mock.ui, sessionManager });
+
+    await mock.emit("session_start", {}, freshCtx());
+    await mock.emit("message_start", mkMessageStartEvent("assistant", []), freshCtx());
+    await mock.emit("message_update", mkFlatMessageEvent("message_update", "assistant", "1"), freshCtx());
+    await mock.emit("message_update", mkFlatMessageEvent("message_update", "assistant", "12"), freshCtx());
+
+    assert.deepEqual(mock.terminalListenerCounts(), {
+      subscriptions: 1,
+      unsubscriptions: 0,
+    });
   });
 
   it("事件触发时会从 getBranch 校准生成小点", async () => {
@@ -378,8 +485,8 @@ describe("index 集成", () => {
   });
 
   it("Alt+→ 选中第一条", async () => {
-    await mock.emit("input", mkInputEvent("a"), ctx);
-    await mock.emit("input", mkInputEvent("b"), ctx);
+    await emitUserMessage("a");
+    await emitUserMessage("b");
     mock.fireShortcut("alt+right");
     const last = mock.widgets.at(-1)!;
     assert.equal(last.content[0], "◉ ●");
@@ -403,15 +510,15 @@ describe("index 集成", () => {
   });
 
   it("Alt+← 不越过首位", async () => {
-    await mock.emit("input", mkInputEvent("a"), ctx);
+    await emitUserMessage("a");
     mock.fireShortcut("alt+right");
     mock.fireShortcut("alt+left");
     assert.equal(mock.widgets.at(-1)!.content[0], "◉");
   });
 
   it("兼容旧方向键别名选择消息", async () => {
-    await mock.emit("input", mkInputEvent("a"), ctx);
-    await mock.emit("input", mkInputEvent("b"), ctx);
+    await emitUserMessage("a");
+    await emitUserMessage("b");
     mock.fireShortcut("alt+arrowright");
     assert.equal(mock.widgets.at(-1)!.content[0], "◉ ●");
     mock.fireShortcut("alt+arrowleft");
@@ -419,8 +526,8 @@ describe("index 集成", () => {
   });
 
   it("raw Alt+方向键输入可兜底选择消息", async () => {
-    await mock.emit("input", mkInputEvent("a"), ctx);
-    await mock.emit("input", mkInputEvent("b"), ctx);
+    await emitUserMessage("a");
+    await emitUserMessage("b");
     assert.deepEqual(mock.fireTerminalInput("\x1b[1;3C"), { consume: true });
     assert.equal(mock.widgets.at(-1)!.content[0], "◉ ●");
     assert.deepEqual(mock.fireTerminalInput("\x1b[1;3D"), { consume: true });
@@ -428,14 +535,14 @@ describe("index 集成", () => {
   });
 
   it("Alt+1 选中可见窗口第 1 个", async () => {
-    await mock.emit("input", mkInputEvent("a"), ctx);
-    await mock.emit("input", mkInputEvent("b"), ctx);
+    await emitUserMessage("a");
+    await emitUserMessage("b");
     mock.fireShortcut("alt+1");
     assert.equal(mock.widgets.at(-1)!.content[0], "◉ ●");
   });
 
   it("Alt+/ 预览选中消息", async () => {
-    await mock.emit("input", mkInputEvent("预览内容"), ctx);
+    await emitUserMessage("预览内容");
     mock.fireShortcut("alt+right");
     mock.fireShortcut("alt+/");
     const n = mock.notifications.at(-1)!;
@@ -495,6 +602,7 @@ describe("index 集成", () => {
     };
 
     await mock.emit("input", mkInputEvent("相同问题"), appendCtx);
+    await mock.emit("message_start", mkMessageStartEvent("user", "相同问题"), appendCtx);
     branch.push({
       id: "real-user-entry-id",
       type: "message",
@@ -506,7 +614,7 @@ describe("index 集成", () => {
   });
 
   it("缺少 scrollToEntryId 时快捷键更新选中并提示", async () => {
-    await mock.emit("input", mkInputEvent("a"), ctx);
+    await emitUserMessage("a");
     mock.fireShortcut("alt+right");
     assert.equal(mock.widgets.at(-1)!.content[0], "◉");
     assert.equal(mock.notifications.at(-1)?.level, "warning");

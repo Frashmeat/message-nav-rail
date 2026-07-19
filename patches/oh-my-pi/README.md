@@ -440,7 +440,8 @@ git apply -R "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-en
 扩展稳定性：
 
 - 小白点生成正常。
-- `/resume` 后小白点继续正确生成。
+- `/resume`、新建、分叉和 handoff 后立即按新 branch 重建；空会话不残留旧点。
+- `/help`、`!command` 等本地命令不生成幽灵点。
 - `Alt+Left` / `Alt+Right` 能移动选中。
 - `Alt+/` 能预览选中消息。
 - 删除或禁用本地补丁后，跳转静默失效，不弹错误。

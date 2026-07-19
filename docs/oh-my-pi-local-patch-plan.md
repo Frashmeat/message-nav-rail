@@ -162,13 +162,14 @@ function scrollToEntryId(id: string): boolean {
 
 消息列表必须以 `ctx.sessionManager.getBranch()` 为准：
 
-- `session_start` 时从 branch 全量重建。
+- `session_start` 和 `session_switch` 时从 branch 全量重建；空 branch 也必须清空旧状态。
+- `input` 只触发 branch 刷新，不直接生成用户点；用户临时点由 `message_start` / `message_end` 确认，避免本地命令产生幽灵节点。
 - `input`、`message_start`、`message_end` 后安排短延迟刷新，吸收 Oh My Pi 写入 session 的时序差。
 - branch 派生消息标记为可锚定，使用真实 `entry.id` 跳转。
 - 事件派生的临时消息只用于即时显示，不能调用 `scrollToEntryId` 跳转。
 - 如果 `message_start` 时 branch 已经包含真实 assistant entry，不再追加临时 assistant 点，避免重复小白点。
 - 方向键快捷键同时注册 `alt+right/left` 和旧别名 `alt+arrowright/arrowleft`。
-- 如果宿主暴露 `ctx.ui.onTerminalInput`，扩展额外监听常见 Alt+方向键 escape sequence 作为兜底，避免终端/解析别名差异导致无法选中。
+- 如果宿主暴露 `ctx.ui.onTerminalInput`，扩展按稳定的 UI 身份只注册一次常见 Alt+方向键 escape sequence 兜底；会话切换时显式注销并重新注册。
 
 推荐写法：
 
@@ -271,7 +272,8 @@ Remove-Item "C:\Users\Administrator\.omp\agent\extensions\message-nav-rail.mjs" 
 验收：
 
 - 小白点生成正常。
-- `/resume` 后小白点继续正确生成。
+- `/resume`、新建、分叉和 handoff 后立即按新 branch 重建；切换到空会话时旧点被清空。
+- `/help`、`!command` 等本地命令不生成幽灵点。
 - `Alt+Left` / `Alt+Right` 能移动选中。
 - `Alt+/` 能预览选中消息。
 - 如果本地补丁有效，`Alt+1..9` 能滚动到对应消息。

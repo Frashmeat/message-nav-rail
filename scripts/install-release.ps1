@@ -1,18 +1,22 @@
 param(
   [string]$InstallRoot = "",
-  [string]$TargetOmp = ""
+  [string]$TargetOmp = "",
+  [switch]$ValidateOnly
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$bundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$bundleRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path))
 $manifestPath = Join-Path $bundleRoot "manifest.json"
 $checksumsPath = Join-Path $bundleRoot "SHA256SUMS.txt"
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw "manifest.json not found." }
 if (-not (Test-Path -LiteralPath $checksumsPath)) { throw "SHA256SUMS.txt not found." }
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 
+if ([int]$manifest.schemaVersion -ne 1) { throw "Unsupported manifest schemaVersion: $($manifest.schemaVersion)" }
+if ([string]::IsNullOrWhiteSpace([string]$manifest.bundleVersion)) { throw "Release manifest is missing bundleVersion." }
+if ([string]::IsNullOrWhiteSpace([string]$manifest.upstreamVersion)) { throw "Release manifest is missing upstreamVersion." }
 if (-not [Environment]::Is64BitOperatingSystem) { throw "Only 64-bit Windows is supported." }
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [System.Runtime.InteropServices.Architecture]::X64) { throw "Only Windows x64 on Intel/AMD x86-64 is supported." }
 if (-not [Environment]::Is64BitProcess) { throw "Run this installer from 64-bit PowerShell." }
@@ -44,16 +48,35 @@ function Invoke-Checked {
 }
 
 function Test-Checksums {
+  $rootPrefix = $bundleRoot.TrimEnd(
+    [System.IO.Path]::DirectorySeparatorChar,
+    [System.IO.Path]::AltDirectorySeparatorChar
+  ) + [System.IO.Path]::DirectorySeparatorChar
+  $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+
   foreach ($line in Get-Content -LiteralPath $checksumsPath) {
     if (-not $line.Trim()) { continue }
     if ($line -notmatch '^([a-fA-F0-9]{64})  (.+)$') { throw "Invalid checksum line: $line" }
     $expected = $Matches[1].ToLowerInvariant()
-    $relative = $Matches[2].Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+    $declaredRelative = $Matches[2].Replace('\', '/')
+    $relative = $declaredRelative.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+    if ([System.IO.Path]::IsPathRooted($relative)) { throw "Unsafe checksum path: $declaredRelative" }
     $path = [System.IO.Path]::GetFullPath((Join-Path $bundleRoot $relative))
-    if (-not $path.StartsWith([System.IO.Path]::GetFullPath($bundleRoot), [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe checksum path: $relative" }
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release file missing: $relative" }
+    if (-not $path.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe checksum path: $declaredRelative" }
+    $canonicalRelative = $path.Substring($rootPrefix.Length).Replace('\', '/')
+    if (-not $declaredRelative.Equals($canonicalRelative, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe checksum path: $declaredRelative" }
+    if (-not $seen.Add($canonicalRelative)) { throw "Duplicate checksum entry: $canonicalRelative" }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release file missing: $canonicalRelative" }
     $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actual -ne $expected) { throw "Checksum mismatch: $relative" }
+    if ($actual -ne $expected) { throw "Checksum mismatch: $canonicalRelative" }
+  }
+
+  $bundleFiles = Get-ChildItem -LiteralPath $bundleRoot -Recurse -File | Where-Object {
+    -not $_.FullName.Equals($checksumsPath, [StringComparison]::OrdinalIgnoreCase)
+  }
+  foreach ($file in $bundleFiles) {
+    $relative = $file.FullName.Substring($rootPrefix.Length).Replace('\', '/')
+    if (-not $seen.Contains($relative)) { throw "Missing checksum entry: $relative" }
   }
 }
 
@@ -121,9 +144,19 @@ function Restore-Backup {
   } elseif (Test-Path -LiteralPath $pluginLockPath) {
     Remove-Item -LiteralPath $pluginLockPath -Force
   }
+  $backupState = Join-Path $BackupDir "installation.json"
+  if (Test-Path -LiteralPath $backupState) {
+    Copy-Item -LiteralPath $backupState -Destination $statePath -Force
+  } elseif (Test-Path -LiteralPath $statePath) {
+    Remove-Item -LiteralPath $statePath -Force
+  }
 }
 
 Test-Checksums
+if ($ValidateOnly) {
+  Write-Host "Release manifest and SHA-256 checks passed."
+  return
+}
 if (Get-Process omp -ErrorAction SilentlyContinue) { throw "omp.exe is running. Close all Oh My Pi sessions first." }
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"

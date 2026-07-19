@@ -57,13 +57,14 @@ npm run build
 
 - `setLabel`、`pi.on(event, handler(event, ctx))`、`registerShortcut(shortcut, options)`：已结合 `17.0.1` 维护源码确认。
 - `ctx.ui.setWidget(key, content, options)`、`ctx.ui.notify`：已结合 `17.0.1` 维护源码确认。
-- `ctx.sessionManager.getBranch()`：当前扩展用它作为权威消息来源；`session_start`、消息事件后刷新 branch，解决 `/resume` 和真实 `entry.id` 锚定问题。
+- `ctx.sessionManager.getBranch()`：当前扩展用它作为权威消息来源；`session_start`、`session_switch` 和消息事件后刷新 branch，解决 `/resume`、空会话切换和真实 `entry.id` 锚定问题。
 - `ctx.sessionManager.onEntryAppended(handler)`：本地源码核对后确认不应作为扩展 API 使用。它是 `SessionManager` 内部单回调属性，不是稳定订阅接口，扩展已移除依赖。
 - `ctx.ui.scrollToEntryId(id)`：需要本地 Oh My Pi 补丁暴露；存在时快捷键跳转到真实 entry，不存在时只移动选中。
-- `ctx.ui.onTerminalInput(handler)`：存在时用于 Alt+方向键 raw input 兜底，解决终端 escape sequence 或 key id 别名差异导致快捷键不触发的问题。
+- `ctx.ui.onTerminalInput(handler)`：存在时用于 Alt+方向键 raw input 兜底；OMP 每个事件都会创建新 `ExtensionContext`，因此当前实现按稳定 UI 身份复用监听器，并在会话切换时重绑。
 - `ctx.navigateTree(id)`：只属于命令上下文，不在消息事件的 `ExtensionContext` 中使用。
 - `ctx.ui.setFooter(...)`：不再使用。当前扩展只以 `setWidget(..., { placement: "aboveEditor" })` 渲染小白点，避免绑定 Oh My Pi 后续 footer 语义。
-- `message_start`、`message_end`：`omp -p` 实测 payload 为 `event.message.role/content`；当前实现同时兼容旧计划中出现过的 `event.role/text/content/messageId`。
+- `input`：只作为 branch 刷新触发，不直接创建用户点；本地命令不会进入会话树，不能把原始输入等同于消息。
+- `message_start`、`message_end`：`omp -p` 实测 payload 为 `event.message.role/content`；用户和模型临时点均由这两个消息事件确认，当前实现同时兼容旧计划中出现过的扁平 payload。
 - `message_update`：已通过回归测试确认 branch 定时刷新不会清除尚未持久化的流式消息。
 
 ## 当前已知限制
@@ -72,7 +73,7 @@ npm run build
 - `scrollToEntryId` 需要本地 Oh My Pi 补丁暴露。缺失跳转 API 时扩展静默降级，不提示、不改变会话状态。
 - 用户本机曾存在旧版全局扩展 `C:\Users\Administrator\.omp\agent\extensions\message-nav-rail.mjs`，可能覆盖或干扰当前包安装。正式安装当前包前应删除或禁用旧文件，再执行 `omp install . --force`。
 
-> 下方 Task 章节是 2026-07-05 的历史实施计划，部分代码片段保留当时写法，仅作为演进记录；当前可执行入口、脚本和 API 核对结论以上方“当前状态 / 当前命令 / 当前 API 核对结论”为准。
+> 下方 Task 章节是 2026-07-05 的历史实施计划，部分代码片段保留当时写法，仅作为演进记录；当前可执行入口、脚本和 API 核对结论以上方“当前状态 / 当前命令 / 当前 API 核对结论”为准，尤其不能再直接按 `input` 创建用户消息。
 
 ---
 

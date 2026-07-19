@@ -20,6 +20,8 @@
 
 GitHub Windows runner 的 workspace 位于 `D:`，而 Bun 全局缓存通常位于 `C:`。Bun 1.3.14 存在编译目标跨盘移动失败的问题（Bun issue #28327），因此工作流将 `BUN_INSTALL_CACHE_DIR` 固定到 `${{ github.workspace }}/.tmp/bun-cache`，让下载、解压和最终缓存位于同一卷。
 
+仓库通过 `.gitattributes` 将 `*.patch` 固定为 LF，避免 Windows checkout 受 `core.autocrlf` 影响后生成 CRLF 补丁，导致 `git apply` 无法匹配上游源码。
+
 ## 发布状态（2026-07-17）
 
 - 构建 Action [`29553749190`](https://github.com/Frashmeat/message-nav-rail/actions/runs/29553749190) 已成功，源码提交为 `d7e9d6bee9512327fd6e8a195989c857a734c57e`。

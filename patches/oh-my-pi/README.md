@@ -263,6 +263,7 @@ cd F:\WebCode\message-nav-rail
 - 采用 17.0.5 的 native live-region pinning 契约；固定布局从边界 0 开始报告 pinned，避免消息切片和固定输入区进入终端原生 scrollback，不恢复上游已经移除的旧 Transcript 压缩/重放实现。
 - 17.x 已删除静态 `legacy-pi-bundled-keys.ts` 和 `legacy-pi-bundled-registry.ts`，改为从 package exports 动态生成虚拟模块；本地补丁不再维护静态 bundled registry。
 - 上游合并后的定向测试覆盖 Transcript 原生模式、固定 viewport 模式、扩展跳转、键盘滚动、鼠标滚动和 session entry id 对齐。
+- Windows/WSL 上会等待 ConPTY 全量重绘后的 150 ms 静默窗口，再断言可能被合并的 trailing render，避免 4 个渲染回归测试读取上一帧。
 
 - `packages/coding-agent/src/extensibility/extensions/types.ts`
   - 新增 `ExtensionScrollToEntryOptions`

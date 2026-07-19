@@ -1201,10 +1201,71 @@ index 0000000000000000000000000000000000000000..764565e526f9a72b0d7546d08eb00c20
 +	});
 +});
 diff --git a/packages/tui/test/render-regressions.test.ts b/packages/tui/test/render-regressions.test.ts
-index 364b1b6609289cd55b96897f4208872d26091307..545d384890d1ce1836cd11b0fb7be88ceeae0239 100644
+index 364b1b6609289cd55b96897f4208872d26091307..05228e2190a430f5407b35f91c3841892cec5000 100644
 --- a/packages/tui/test/render-regressions.test.ts
 +++ b/packages/tui/test/render-regressions.test.ts
-@@ -3319,6 +3319,7 @@ describe("TUI terminal-state regressions", () => {
+@@ -9,6 +9,7 @@ import {
+ 	TERMINAL,
+ 	TUI,
+ } from "@oh-my-pi/pi-tui";
++import { isConPTYHosted } from "@oh-my-pi/pi-tui/terminal";
+ import { VirtualTerminal } from "./virtual-terminal";
+ 
+ class MutableLinesComponent implements Component {
+@@ -156,6 +157,16 @@ async function settle(term: VirtualTerminal): Promise<void> {
+ 	await term.flush();
+ }
+ 
++// A destructive full paint arms a 150 ms quiet window on ConPTY hosts. A frame
++// requested inside that window is coalesced into a trailing render, so tests
++// awaiting that frame must wait past the contract before inspecting the terminal.
++async function settleConPTYDeferredRender(term: VirtualTerminal): Promise<void> {
++	await settle(term);
++	if (!isConPTYHosted()) return;
++	await Bun.sleep(200);
++	await settle(term);
++}
++
+ // Outside a multiplexer a resize paints the viewport immediately and defers the
+ // authoritative full replay (rewrap + ED3 + history rebuild) until the drag has
+ // been quiet for the resize settle window (120 ms). Tests asserting the settled
+@@ -1080,7 +1091,7 @@ describe("TUI terminal-state regressions", () => {
+ 
+ 				component.setLines(rows("row-", 24));
+ 				tui.requestRender();
+-				await settle(term);
++				await settleConPTYDeferredRender(term);
+ 
+ 				const viewport = visible(term).filter(line => line.trim().length > 0);
+ 				expect(viewport).toHaveLength(6);
+@@ -2124,7 +2135,7 @@ describe("TUI terminal-state regressions", () => {
+ 				// tail commits normally on the update path — exactly once.
+ 				component.setLines([...finalFrame, ...rows("tail-", 5)]);
+ 				tui.requestRender();
+-				await settle(term);
++				await settleConPTYDeferredRender(term);
+ 
+ 				expect(visible(term).map(line => line.trim())).toEqual(rows("tail-", 5));
+ 				const grownHistory = term
+@@ -2517,7 +2528,7 @@ describe("TUI terminal-state regressions", () => {
+ 				const short = [...rows("short-", 14), "prompt-row"];
+ 				component.setLines(short);
+ 				tui.requestRender();
+-				await settle(term);
++				await settleConPTYDeferredRender(term);
+ 
+ 				expect(visible(term).map(line => line.trim())).toEqual([
+ 					"short-5",
+@@ -3214,7 +3225,7 @@ describe("TUI terminal-state regressions", () => {
+ 				term.scrollLines(-1);
+ 				await settle(term);
+ 				handle.hide();
+-				await settle(term);
++				await settleConPTYDeferredRender(term);
+ 
+ 				expect(term.getScrollBuffer().some(line => line.includes("OV_SENTINEL_4_"))).toBeFalse();
+ 				expect(visible(term).some(line => line.includes("OV_SENTINEL_4_"))).toBeFalse();
+@@ -3319,6 +3330,7 @@ describe("TUI terminal-state regressions", () => {
  			try {
  				tui.start();
  				await settle(term);
@@ -1212,7 +1273,7 @@ index 364b1b6609289cd55b96897f4208872d26091307..545d384890d1ce1836cd11b0fb7be88c
  
  				const showFrom = writes.length;
  				const handle = tui.showOverlay(new MutableLinesComponent(["SELECTABLE PLAN TEXT"]), {
-@@ -3336,6 +3337,7 @@ describe("TUI terminal-state regressions", () => {
+@@ -3336,6 +3348,7 @@ describe("TUI terminal-state regressions", () => {
  				expect(modalWrites).not.toContain("\x1b[?1000h");
  				expect(modalWrites).not.toContain("\x1b[?1003h");
  				expect(modalWrites).not.toContain("\x1b[?1006h");
@@ -1220,7 +1281,7 @@ index 364b1b6609289cd55b96897f4208872d26091307..545d384890d1ce1836cd11b0fb7be88c
  				expect(visible(term).some(line => line.includes("SELECTABLE PLAN TEXT"))).toBeTrue();
  
  				const hideFrom = writes.length;
-@@ -3344,9 +3346,8 @@ describe("TUI terminal-state regressions", () => {
+@@ -3344,9 +3357,8 @@ describe("TUI terminal-state regressions", () => {
  
  				const hideWrites = writes.slice(hideFrom).join("");
  				expect(hideWrites).toContain("\x1b[?1049l");

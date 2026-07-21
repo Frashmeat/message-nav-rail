@@ -27,7 +27,7 @@
 
 扩展负责：
 
-- 生成消息小白点
+- 只为用户输入生成消息小白点
 - `/resume` 后继续维护小白点
 - 快捷键移动选中
 - `Alt+/` 预览选中消息
@@ -167,7 +167,7 @@ function scrollToEntryId(id: string): boolean {
 - `input`、`message_start`、`message_end` 后安排短延迟刷新，吸收 Oh My Pi 写入 session 的时序差。
 - branch 派生消息标记为可锚定，使用真实 `entry.id` 跳转。
 - 事件派生的临时消息只用于即时显示，不能调用 `scrollToEntryId` 跳转。
-- 如果 `message_start` 时 branch 已经包含真实 assistant entry，不再追加临时 assistant 点，避免重复小白点。
+- assistant 事件只触发 branch 校准，assistant entry、流式更新和模型输出均不进入导航栏状态。
 - 方向键快捷键同时注册 `alt+right/left` 和旧别名 `alt+arrowright/arrowleft`。
 - 如果宿主暴露 `ctx.ui.onTerminalInput`，扩展按稳定的 UI 身份只注册一次常见 Alt+方向键 escape sequence 兜底；会话切换时显式注销并重新注册。
 

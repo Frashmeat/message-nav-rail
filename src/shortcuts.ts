@@ -36,8 +36,5 @@ export function handleAltSlash(ctx: ShortcutContext): void {
     return;
   }
   const m = ctx.state.messages[idx];
-  ctx.notify(
-    `[${m.type === "user" ? "用户" : "模型"}] ${m.preview}`,
-    "info"
-  );
+  ctx.notify(`[用户] ${m.preview}`, "info");
 }

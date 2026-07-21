@@ -39,19 +39,16 @@ describe("state", () => {
     assert.equal(moveSelection(INITIAL_STATE, 1).selectedIndex, -1);
   });
 
-  it("rebuildFromEntries 重建用户和模型消息", () => {
+  it("rebuildFromEntries 只重建用户消息", () => {
     const entries = [
       { type: "message", message: { role: "user", content: "你好" } },
       { type: "message", message: { role: "assistant", content: [{ type: "text", text: "你好，有什么可以帮你？" }] } },
     ];
     const s = rebuildFromEntries(entries);
-    assert.equal(s.messages.length, 2);
+    assert.equal(s.messages.length, 1);
     assert.equal(s.messages[0].type, "user");
-    assert.equal(s.messages[1].type, "assistant");
     assert.equal(s.messages[0].preview, "你好");
-    assert.equal(s.messages[1].preview.startsWith("你好"), true);
     assert.equal(s.selectedIndex, -1);
-    assert.equal(s.streamingAssistantId, null);
   });
 
   it("rebuildFromEntries preview 截断到 80 字符", () => {
@@ -70,17 +67,15 @@ describe("state", () => {
     assert.equal(s.messages.length, 1);
   });
 
-  it("rebuildFromEntries 兼容扁平 user/assistant entry", () => {
+  it("rebuildFromEntries 兼容扁平 user entry 并忽略 assistant entry", () => {
     const entries = [
       { id: "u1", type: "user", content: "扁平问题" },
       { id: "a1", type: "assistant", text: "扁平回答" },
     ];
     const s = rebuildFromEntries(entries);
-    assert.equal(s.messages.length, 2);
+    assert.equal(s.messages.length, 1);
     assert.equal(s.messages[0].id, "u1");
     assert.equal(s.messages[0].preview, "扁平问题");
-    assert.equal(s.messages[1].id, "a1");
-    assert.equal(s.messages[1].preview, "扁平回答");
   });
 
   it("selectByVisibleIndex 选中可见窗口内第 N 个", () => {

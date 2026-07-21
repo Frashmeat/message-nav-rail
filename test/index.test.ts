@@ -201,12 +201,12 @@ describe("index 集成", () => {
     assert.equal(mock.widgets.at(-1)!.content[0], "");
   });
 
-  it("完整对话流: user start/end → assistant start/update/end", async () => {
+  it("完整对话流只保留用户输入节点", async () => {
     await emitUserMessage("问题");
     await mock.emit("message_start", mkMessageStartEvent("assistant", [{ type: "text", text: "" }]), ctx);
     await mock.emit("message_end", mkMessageEndEvent("assistant", [{ type: "text", text: "最终答案" }]), ctx);
     const last = mock.widgets.at(-1)!;
-    assert.equal(last.content[0], "● ○");
+    assert.equal(last.content[0], "●");
   });
 
   it("message_end user 可作为 input 缺失时的用户消息来源", async () => {
@@ -254,10 +254,10 @@ describe("index 集成", () => {
     await mock.emit("message_end", end, ctx);
     await mock.emit("message_end", mkMessageEndEvent("assistant", "回答"), ctx);
     await mock.emit("message_end", mkMessageEndEvent("user", "问题"), ctx);
-    assert.equal(mock.widgets.at(-1)!.content[0], "● ○ ●");
+    assert.equal(mock.widgets.at(-1)!.content[0], "● ●");
   });
 
-  it("兼容扁平 message 事件 payload", async () => {
+  it("兼容扁平 user 事件 payload 并忽略 assistant 事件", async () => {
     await mock.emit("input", mkInputEvent("问题"), ctx);
     await mock.emit(
       "message_start",
@@ -285,21 +285,20 @@ describe("index 集成", () => {
       ctx
     );
 
-    assert.equal(mock.widgets.at(-1)!.content[0], "● ○");
-    mock.fireShortcut("alt+right");
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
     mock.fireShortcut("alt+right");
     mock.fireShortcut("alt+/");
-    assert.match(mock.notifications.at(-1)!.msg, /最终答案/);
+    assert.match(mock.notifications.at(-1)!.msg, /问题/);
   });
 
-  it("streaming 中显示半填充符号", async () => {
+  it("streaming assistant 不生成节点", async () => {
     await emitUserMessage("q");
     await mock.emit("message_start", mkMessageStartEvent("assistant", []), ctx);
     const last = mock.widgets.at(-1)!;
-    assert.equal(last.content[0], "● ◐");
+    assert.equal(last.content[0], "●");
   });
 
-  it("branch 定时刷新不会清除尚未持久化的 streaming 消息", async () => {
+  it("assistant 更新不会改变用户节点或预览", async () => {
     const branchCtx: MockCtx = {
       ui: mock.ui,
       sessionManager: {
@@ -312,16 +311,15 @@ describe("index 集成", () => {
     await mock.emit("message_start", mkMessageStartEvent("assistant", []), branchCtx);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    assert.equal(mock.widgets.at(-1)!.content[0], "● ◐");
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
     await mock.emit(
       "message_update",
       mkFlatMessageEvent("message_update", "assistant", "正在回答"),
       branchCtx
     );
     mock.fireShortcut("alt+right");
-    mock.fireShortcut("alt+right");
     mock.fireShortcut("alt+/");
-    assert.match(mock.notifications.at(-1)!.msg, /正在回答/);
+    assert.match(mock.notifications.at(-1)!.msg, /q/);
   });
 
   it("非空历史会话中 message_end 不会清除尚未持久化的用户消息", async () => {
@@ -346,7 +344,7 @@ describe("index 集成", () => {
     assert.equal(mock.widgets.at(-1)!.content[0], "●");
   });
 
-  it("message_start 只接受 assistant 角色", async () => {
+  it("message_start 忽略非 user 角色", async () => {
     await mock.emit("message_start", mkMessageStartEvent("developer", []), ctx);
     assert.equal(mock.widgets.length, 0);
   });
@@ -362,7 +360,7 @@ describe("index 集成", () => {
       },
     };
     await mock.emit("session_start", {}, branchCtx);
-    assert.equal(mock.widgets.at(-1)!.content[0], "● ○");
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
   });
 
   it("session_start 兼容扁平历史 entry", async () => {
@@ -376,7 +374,7 @@ describe("index 集成", () => {
       },
     };
     await mock.emit("session_start", {}, branchCtx);
-    assert.equal(mock.widgets.at(-1)!.content[0], "● ○");
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
     mock.fireShortcut("alt+right");
     mock.fireShortcut("alt+/");
     assert.match(mock.notifications.at(-1)!.msg, /历史问题/);
@@ -464,10 +462,10 @@ describe("index 集成", () => {
     });
     await mock.emit("message_end", mkMessageEndEvent("assistant", "追加回答"), appendCtx);
 
-    assert.equal(mock.widgets.at(-1)!.content[0], "● ○");
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
   });
 
-  it("message_start 已能从 getBranch 看到真实 assistant 时不追加临时小点", async () => {
+  it("message_start 忽略 branch 中的 assistant 条目", async () => {
     const branch = [
       { id: "u1", type: "message", message: { role: "user", content: "问题" } },
       { id: "a1", type: "message", message: { role: "assistant", content: "" } },
@@ -481,7 +479,7 @@ describe("index 集成", () => {
 
     await mock.emit("message_start", mkMessageStartEvent("assistant", ""), branchCtx);
 
-    assert.equal(mock.widgets.at(-1)!.content[0], "● ○");
+    assert.equal(mock.widgets.at(-1)!.content[0], "●");
   });
 
   it("Alt+→ 选中第一条", async () => {

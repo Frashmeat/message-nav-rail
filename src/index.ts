@@ -4,12 +4,7 @@ import type {
 } from "@oh-my-pi/pi-coding-agent";
 import { INITIAL_STATE, type RailMessage, type RailState } from "./types";
 import { renderRail } from "./renderer";
-import {
-  onInput,
-  onMessageStart,
-  onMessageUpdate,
-  onMessageEnd,
-} from "./collector";
+import { onInput } from "./collector";
 import {
   rebuildFromEntries,
   type SessionEntryLike,
@@ -82,10 +77,6 @@ function eventRole(event: unknown): string {
   return typeof role === "string" ? role : "";
 }
 
-function eventMessageId(event: unknown, fallback: string): string {
-  return optionalEventMessageId(event) ?? fallback;
-}
-
 function optionalEventMessageId(event: unknown): string | undefined {
   const id =
     prop(prop(event, "message"), "id") ??
@@ -112,6 +103,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
   let terminalInputUI: ExtensionContext["ui"] | null = null;
   let unsubscribeTerminalInput: (() => void) | undefined;
   let startedUserMessageText: string | null = null;
+  let assistantEventSinceLastUser = false;
   const seenEntryIds = new Set<string>();
   const seenEventIds = new Set<string>();
   const refreshTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -191,6 +183,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
   function resetContextResources() {
     clearRefreshTimers();
     startedUserMessageText = null;
+    assistantEventSinceLastUser = false;
     seenEventIds.clear();
     unsubscribeTerminalInput?.();
     unsubscribeTerminalInput = undefined;
@@ -202,22 +195,11 @@ export default function messageNavRail(pi: ExtensionAPI) {
     const previousSelected = state.selectedIndex >= 0 ? state.messages[state.selectedIndex] : undefined;
     const previousSelectedId = previousSelected?.id;
     const previousSelectedIndex = state.selectedIndex;
-    const previousStreaming = state.streamingAssistantId
-      ? state.messages.find((message) => message.id === state.streamingAssistantId)
-      : undefined;
     const rebuilt = rebuildFromEntries(branch);
     const addedMessages = rebuilt.messages.filter(
       (message) => !previousIds.has(message.id)
     );
-    const next =
-      previousStreaming &&
-      !rebuilt.messages.some((message) => message.id === previousStreaming.id)
-        ? {
-            ...rebuilt,
-            messages: [...rebuilt.messages, previousStreaming],
-            streamingAssistantId: previousStreaming.id,
-          }
-        : rebuilt;
+    const next = rebuilt;
 
     if (previousSelectedId) {
       const selectedIndex = next.messages.findIndex((m) => m.id === previousSelectedId);
@@ -301,11 +283,13 @@ export default function messageNavRail(pi: ExtensionAPI) {
     const last = state.messages.at(-1);
     if (
       source === "message_end" &&
+      !assistantEventSinceLastUser &&
       text.length <= PREVIEW_LEN &&
       last?.type === "user" &&
       last.preview === preview
     ) return;
     state = onInput(state, text);
+    assistantEventSinceLastUser = false;
   }
 
   async function rebuildForSession(ctx: ExtensionContext, logLabel: string) {
@@ -378,42 +362,28 @@ export default function messageNavRail(pi: ExtensionAPI) {
     ensureTerminalInputListener(ctx);
     try {
       const role = eventRole(event);
-      if (role !== "user" && role !== "assistant") return;
-      const refresh = refreshFromBranch(ctx, false);
-      if (role === "user") {
-        const text = eventContentText(event);
-        const eventId = optionalEventMessageId(event);
-        const preview = truncate(text, PREVIEW_LEN);
-        const alreadyAnchored =
-          (eventId !== undefined && state.messages.some((message) => message.id === eventId)) ||
-          refresh.addedMessages.some(
-            (message) => message.type === "user" && message.preview === preview
-          );
-        if (text.trim().length > 0) startedUserMessageText = text;
-        if (alreadyAnchored) {
-          if (eventId) seenEventIds.add(eventId);
-        } else {
-          appendUserMessageIfMissing(text, eventId, "message_start");
+      if (role !== "user") {
+        if (role === "assistant") {
+          assistantEventSinceLastUser = true;
+          tryRefreshFromBranch(ctx);
+          scheduleBranchRefresh(ctx);
         }
-        rerender();
-        scheduleBranchRefresh(ctx);
         return;
       }
+      const refresh = refreshFromBranch(ctx, false);
+      const text = eventContentText(event);
       const eventId = optionalEventMessageId(event);
+      const preview = truncate(text, PREVIEW_LEN);
       const alreadyAnchored =
-        (eventId !== undefined &&
-          state.messages.some((message) => message.id === eventId)) ||
-        refresh.addedMessages.some((message) => message.type === "assistant");
-      if (refresh.refreshed && alreadyAnchored) {
-        rerender();
-        scheduleBranchRefresh(ctx);
-        return;
+        (eventId !== undefined && state.messages.some((message) => message.id === eventId)) ||
+        refresh.addedMessages.some((message) => message.preview === preview);
+      if (text.trim().length > 0) startedUserMessageText = text;
+      if (alreadyAnchored) {
+        if (eventId) seenEventIds.add(eventId);
+        assistantEventSinceLastUser = false;
+      } else {
+        appendUserMessageIfMissing(text, eventId, "message_start");
       }
-      const id = eventMessageId(
-        event,
-        `assistant-${state.messages.length}-${Date.now()}`
-      );
-      state = onMessageStart(state, id);
       rerender();
       scheduleBranchRefresh(ctx);
     } catch (e) {
@@ -424,15 +394,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
   pi.on("message_update", async (event, ctx) => {
     currentCtx = ctx;
     ensureTerminalInputListener(ctx);
-    try {
-      if (!state.streamingAssistantId) return;
-      if (eventRole(event) !== "assistant") return;
-      const text = eventContentText(event);
-      state = onMessageUpdate(state, state.streamingAssistantId, text);
-      rerender();
-    } catch (e) {
-      pi.logger?.error("message_update handler failed", e);
-    }
+    if (eventRole(event) === "assistant") assistantEventSinceLastUser = true;
   });
 
   pi.on("message_end", async (event, ctx) => {
@@ -440,39 +402,23 @@ export default function messageNavRail(pi: ExtensionAPI) {
     ensureTerminalInputListener(ctx);
     try {
       const role = eventRole(event);
-      if (role === "user") {
-        const text = eventContentText(event);
-        if (startedUserMessageText !== text) {
-          tryRefreshFromBranch(ctx, false);
+      if (role !== "user") {
+        if (role === "assistant") {
+          assistantEventSinceLastUser = true;
+          tryRefreshFromBranch(ctx);
+          scheduleBranchRefresh(ctx);
         }
-        appendUserMessageIfMissing(
-          text,
-          optionalEventMessageId(event),
-          "message_end"
-        );
-        rerender();
-        scheduleBranchRefresh(ctx);
         return;
       }
-      if (role !== "assistant") return;
-      tryRefreshFromBranch(ctx, false);
       const text = eventContentText(event);
-      const last = state.messages.at(-1);
-      if (!state.streamingAssistantId && last?.type === "assistant" && last.preview === truncate(text, PREVIEW_LEN)) {
-        rerender();
-        scheduleBranchRefresh(ctx);
-        return;
+      if (startedUserMessageText !== text) {
+        tryRefreshFromBranch(ctx, false);
       }
-      let streamingAssistantId = state.streamingAssistantId;
-      if (!streamingAssistantId) {
-        const id = eventMessageId(
-          event,
-          `assistant-${state.messages.length}-${Date.now()}`
-        );
-        state = onMessageStart(state, id);
-        streamingAssistantId = id;
-      }
-      state = onMessageEnd(state, streamingAssistantId, text);
+      appendUserMessageIfMissing(
+        text,
+        optionalEventMessageId(event),
+        "message_end"
+      );
       rerender();
       scheduleBranchRefresh(ctx);
     } catch (e) {

@@ -4,7 +4,7 @@
 
 **Goal:** 实现一个 Oh My Pi 扩展，在输入框上方渲染横向消息导航小点条，用快捷键选中并预览消息。
 
-**当前状态（2026-07-19 核对）：** 已用本地 Oh My Pi `17.0.5` 维护源码核对扩展 API。当前项目以 `types/pi-coding-agent.d.ts` 保存实际使用的宿主类型子集，并在运行时兼容两类已出现事件 payload：`event.message.role/content` 与 `event.role/text/content/messageId`。
+**当前状态（2026-07-21 核对）：** 已用本地 Oh My Pi `17.0.5` 维护源码核对扩展 API。当前项目以 `types/pi-coding-agent.d.ts` 保存实际使用的宿主类型子集，并在运行时兼容两类已出现事件 payload：`event.message.role/content` 与 `event.role/text/content/messageId`。导航栏只保留用户输入，assistant entry 与流式输出不生成节点。
 
 **Architecture:** 纯 TypeScript 扩展模块，入口为 `message-nav-rail.ts`，通过 `ExtensionAPI` 注册事件处理器（触发刷新/临时显示）、快捷键（移动选中/可选跳转）、`ctx.ui.setWidget`（渲染小点条）。消息列表以 `sessionManager.getBranch()` 为权威来源；跳转优先走能力检测后的 `ctx.ui.scrollToEntryId`，缺失时静默降级。
 
@@ -64,8 +64,8 @@ npm run build
 - `ctx.navigateTree(id)`：只属于命令上下文，不在消息事件的 `ExtensionContext` 中使用。
 - `ctx.ui.setFooter(...)`：不再使用。当前扩展只以 `setWidget(..., { placement: "aboveEditor" })` 渲染小白点，避免绑定 Oh My Pi 后续 footer 语义。
 - `input`：只作为 branch 刷新触发，不直接创建用户点；本地命令不会进入会话树，不能把原始输入等同于消息。
-- `message_start`、`message_end`：`omp -p` 实测 payload 为 `event.message.role/content`；用户和模型临时点均由这两个消息事件确认，当前实现同时兼容旧计划中出现过的扁平 payload。
-- `message_update`：已通过回归测试确认 branch 定时刷新不会清除尚未持久化的流式消息。
+- `message_start`、`message_end`：`omp -p` 实测 payload 为 `event.message.role/content`；用户临时点由这两个消息事件确认，assistant 事件仅触发 branch 校准，当前实现同时兼容旧计划中出现过的扁平 payload。
+- `message_update`：assistant 流式更新不进入导航栏状态。
 
 ## 当前已知限制
 

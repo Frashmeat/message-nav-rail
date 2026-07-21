@@ -95,18 +95,17 @@ export function railMessageFromEntry(
     entry.type === "message"
       ? entry.message?.role ?? entry.role
       : entry.type;
-  if (role !== "user" && role !== "assistant") return null;
+  if (role !== "user") return null;
   return {
     id:
       typeof entry.id === "string"
         ? entry.id
         : typeof entry.message?.id === "string"
           ? entry.message.id
-          : `${role}-${fallbackIndex}`,
-    type: role,
+          : `user-${fallbackIndex}`,
+    type: "user",
     preview: truncate(textFromEntry(entry), PREVIEW_LEN),
     timestamp: 0,
-    streaming: false,
     anchorable: true,
   };
 }

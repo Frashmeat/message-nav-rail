@@ -28,7 +28,7 @@ function runBlocks(yaml: string): string[] {
 describe("Windows 发布工作流", () => {
   it("锁定 17.0.6 稳定基线和对应发布补丁", async () => {
     const yaml = await readFile(workflowUrl, "utf8");
-    assert.match(yaml, /default: "17\.0\.6-custom\.1"/);
+    assert.match(yaml, /default: "17\.0\.6-custom\.2"/);
     assert.match(
       yaml,
       /default: "89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6"/

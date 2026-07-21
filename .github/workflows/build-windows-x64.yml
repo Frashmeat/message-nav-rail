@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       bundle_version:
-        description: "组合版本，例如 17.0.6-custom.1"
+        description: "组合版本，例如 17.0.6-custom.2"
         required: true
-        default: "17.0.6-custom.1"
+        default: "17.0.6-custom.2"
       oh_my_pi_ref:
         description: "can1357/oh-my-pi 的 commit 或分支"
         required: true

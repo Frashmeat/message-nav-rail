@@ -32,6 +32,7 @@ $backupRoot = Join-Path $InstallRoot "backups"
 $ompPluginsRoot = Join-Path $env:USERPROFILE ".omp\plugins"
 $pluginPath = Join-Path $ompPluginsRoot "node_modules\message-nav-rail"
 $pluginLockPath = Join-Path $ompPluginsRoot "omp-plugins.lock.json"
+$pluginName = "message-nav-rail"
 
 function Copy-DirectoryContents {
   param([string]$Source, [string]$Destination)
@@ -45,6 +46,53 @@ function Invoke-Checked {
   param([string]$FilePath, [string[]]$Arguments)
   & $FilePath @Arguments
   if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $FilePath $($Arguments -join ' ')" }
+}
+
+function Install-ManagedPlugin {
+  param([string]$Source)
+
+  $packagePath = Join-Path $Source "package.json"
+  if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) { throw "Plugin package.json not found." }
+  $package = Get-Content -Raw -LiteralPath $packagePath | ConvertFrom-Json
+  if ([string]$package.name -ne $pluginName) { throw "Unexpected plugin package name: $($package.name)" }
+  if ([string]::IsNullOrWhiteSpace([string]$package.version)) { throw "Plugin package.json is missing version." }
+
+  if (Test-Path -LiteralPath $pluginPath) { Remove-Item -LiteralPath $pluginPath -Recurse -Force }
+  Copy-DirectoryContents -Source $Source -Destination $pluginPath
+
+  New-Item -ItemType Directory -Path $ompPluginsRoot -Force | Out-Null
+  if (Test-Path -LiteralPath $pluginLockPath) {
+    $config = Get-Content -Raw -LiteralPath $pluginLockPath | ConvertFrom-Json
+    if ($null -eq $config) { throw "Plugin lock file is empty." }
+  } else {
+    $config = [pscustomobject]@{
+      plugins = [pscustomobject]@{}
+      settings = [pscustomobject]@{}
+    }
+  }
+
+  if (-not ($config.PSObject.Properties.Name -contains "plugins")) {
+    Add-Member -InputObject $config -MemberType NoteProperty -Name "plugins" -Value ([pscustomobject]@{})
+  } elseif ($null -eq $config.plugins) {
+    $config.plugins = [pscustomobject]@{}
+  }
+
+  $entry = [pscustomobject]@{
+    version = [string]$package.version
+    enabledFeatures = $null
+    enabled = $true
+  }
+  Add-Member -InputObject $config.plugins -MemberType NoteProperty -Name $pluginName -Value $entry -Force
+
+  $newPluginLock = "$pluginLockPath.new"
+  try {
+    $configJson = $config | ConvertTo-Json -Depth 20
+    [System.IO.File]::WriteAllText($newPluginLock, $configJson, [System.Text.UTF8Encoding]::new($false))
+    Get-Content -Raw -LiteralPath $newPluginLock | ConvertFrom-Json | Out-Null
+    Move-Item -LiteralPath $newPluginLock -Destination $pluginLockPath -Force
+  } finally {
+    if (Test-Path -LiteralPath $newPluginLock) { Remove-Item -LiteralPath $newPluginLock -Force }
+  }
 }
 
 function Test-Checksums {
@@ -178,8 +226,8 @@ try {
 
   if (Test-Path -LiteralPath $extensionRoot) { Remove-Item -LiteralPath $extensionRoot -Recurse -Force }
   Copy-Item -LiteralPath (Join-Path $bundleRoot "extension") -Destination $extensionRoot -Recurse -Force
-  if (Test-Path -LiteralPath $pluginPath) { Remove-Item -LiteralPath $pluginPath -Recurse -Force }
-  Invoke-Checked -FilePath $TargetOmp -Arguments @("plugin", "install", $extensionRoot)
+  Install-ManagedPlugin -Source $extensionRoot
+  Invoke-Checked -FilePath $TargetOmp -Arguments @("plugin", "list")
   Invoke-Checked -FilePath $TargetOmp -Arguments @("--version")
 
   $probeFile = Join-Path $InstallRoot "native-probe.txt"

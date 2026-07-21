@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   copyFile,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -45,6 +46,7 @@ async function createValidationBundle(): Promise<string> {
   await writeBundleFile(root, "extension/message-nav-rail.mjs", "export default function () {}\n");
   await writeBundleFile(root, "extension/package.json", JSON.stringify({
     name: "message-nav-rail",
+    version: "0.1.0",
     type: "module",
     main: "./message-nav-rail.mjs",
   }));
@@ -52,8 +54,11 @@ async function createValidationBundle(): Promise<string> {
     schemaVersion: 1,
     bundleVersion: "17.0.1-custom.1",
     upstreamVersion: "17.0.1",
+    extensionVersion: "0.1.0",
     platform: "windows",
     architecture: "x64",
+    sourceCommit: "test-source-commit",
+    ohMyPiCommit: "test-oh-my-pi-commit",
   }));
   return root;
 }
@@ -185,6 +190,75 @@ describe("发布安装脚本", { skip: process.platform !== "win32" }, () => {
     const traversal = runPowerShell(join(traversalRoot, "install.ps1"), ["-ValidateOnly"]);
     assert.notEqual(traversal.status, 0);
     assert.match(`${traversal.stderr}\n${traversal.stdout}`, /unsafe checksum path/i);
+  });
+
+  it("普通权限安装使用真实目录并保留其他插件配置", async (t) => {
+    const windowsPowerShell = join(
+      process.env.SystemRoot ?? "C:\\Windows",
+      "System32/WindowsPowerShell/v1.0/powershell.exe",
+    );
+    if (!existsSync(windowsPowerShell)) {
+      t.skip("Windows PowerShell 5.1 不可用");
+      return;
+    }
+
+    const root = await createValidationBundle();
+    const runtimeRoot = await tempDirectory("message-nav-install-runtime-");
+    const profile = join(runtimeRoot, "profile");
+    const installRoot = join(runtimeRoot, "install");
+    const targetOmp = join(runtimeRoot, "bin", "omp.cmd");
+    const pluginsRoot = join(profile, ".omp", "plugins");
+    const pluginPath = join(pluginsRoot, "node_modules", "message-nav-rail");
+    const nativeRoot = join(profile, ".omp", "natives", "17.0.1");
+
+    await writeBundleFile(root, "omp.exe", [
+      "@echo off",
+      "if \"%~1\"==\"--version\" echo omp/17.0.1",
+      "exit /b 0",
+      "",
+    ].join("\r\n"));
+    await mkdir(pluginsRoot, { recursive: true });
+    await writeFile(join(pluginsRoot, "omp-plugins.lock.json"), JSON.stringify({
+      plugins: {
+        "existing-plugin": {
+          version: "2.0.0",
+          enabledFeatures: ["feature-a"],
+          enabled: false,
+        },
+      },
+      settings: { theme: "existing-value" },
+    }));
+    await mkdir(nativeRoot, { recursive: true });
+    await writeFile(join(nativeRoot, "pi_natives.win32-x64-baseline.node"), "native");
+    await writeChecksums(root);
+
+    const result = runPowerShell(
+      join(root, "install.ps1"),
+      ["-InstallRoot", installRoot, "-TargetOmp", targetOmp],
+      { USERPROFILE: profile },
+      windowsPowerShell,
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const installedPlugin = await lstat(pluginPath);
+    assert.equal(installedPlugin.isDirectory(), true);
+    assert.equal(installedPlugin.isSymbolicLink(), false);
+
+    const installedPackage = JSON.parse(await readFile(join(pluginPath, "package.json"), "utf8"));
+    assert.equal(installedPackage.name, "message-nav-rail");
+
+    const lock = JSON.parse(await readFile(join(pluginsRoot, "omp-plugins.lock.json"), "utf8"));
+    assert.deepEqual(lock.plugins["existing-plugin"], {
+      version: "2.0.0",
+      enabledFeatures: ["feature-a"],
+      enabled: false,
+    });
+    assert.deepEqual(lock.plugins["message-nav-rail"], {
+      version: "0.1.0",
+      enabledFeatures: null,
+      enabled: true,
+    });
+    assert.deepEqual(lock.settings, { theme: "existing-value" });
   });
 
   it("覆盖升级回滚后恢复上一版 installation.json", async () => {

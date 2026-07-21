@@ -209,7 +209,7 @@ patches/
 
 `patches/oh-my-pi/README.md` 记录补丁目标、前置条件、源码定位关键词、应用/回滚流程和验收清单。
 
-注意：Oh My Pi fork 的活跃维护工作树位于 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `17.0.6`，合并基线是稳定标签 `v17.0.6` 的 `89d6a8f6d`；本轮升级尚未执行 native/二进制重型构建或部署，已安装二进制于 2026-07-21 验证仍为 `16.3.15`。安装版本必须通过 `omp.exe --version` 实时确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
+注意：Oh My Pi fork 的活跃维护工作树位于 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `17.0.6`，合并基线是稳定标签 `v17.0.6` 的 `89d6a8f6d`；GitHub Action `29829441666` 已完成 native/二进制构建与打包，并发布 `v17.0.6-custom.1` prerelease。本机尚未覆盖部署该版本，2026-07-21 验证的已安装二进制仍为 `16.3.15`；安装版本必须通过 `omp.exe --version` 实时确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
 
 当前实现状态：
 

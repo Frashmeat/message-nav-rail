@@ -35,6 +35,8 @@ F:\WebCode\message-nav-rail\ohmypi\oh-my-pi
 当前补丁与历史归档：
 
 ```text
+patches/oh-my-pi/17.0.8-scroll-to-entry-and-fixed-composer.patch
+patches/oh-my-pi/17.0.8-release-windows-x64.patch
 patches/oh-my-pi/17.0.6-scroll-to-entry-and-fixed-composer.patch
 patches/oh-my-pi/17.0.6-release-windows-x64.patch
 patches/oh-my-pi/17.0.5-scroll-to-entry-and-fixed-composer.patch
@@ -45,7 +47,7 @@ patches/oh-my-pi/16.3.15-scroll-to-entry-and-fixed-composer.patch
 patches/oh-my-pi/16.3.15-release-windows-x64.patch
 ```
 
-当前 `17.0.6` 的两个补丁内容一致，均以 `can1357/oh-my-pi` 的稳定标签 `v17.0.6`（`89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6`）为基线，SHA-256 均为 `b1b65b0cf5b9ce48f788b35db03be4b9f9789ce0f72cff130dae5becd6f9b5f8`。前者用于本地维护和审查，后者由 Windows x64 GitHub Actions 使用；`17.0.5`、`17.0.1` 和 `16.3.15` 文件仅作历史归档。
+当前 `17.0.8` 的两个补丁内容一致，均以 `can1357/oh-my-pi` 的稳定标签 `v17.0.8`（`5e362714fe3cdbecb16bc177067af20ba18d8c83`）为基线，SHA-256 均为 `37dc67539893b6713c4682c567c49d6aaae7951d75ebf0ac78530e8ca33ecdb0`。前者用于本地维护和审查，后者由 Windows x64 GitHub Actions 使用；`17.0.6`、`17.0.5`、`17.0.1` 和 `16.3.15` 文件仅作历史归档。
 
 扩展侧已经按能力检测适配：
 
@@ -70,7 +72,7 @@ patches/oh-my-pi/16.3.15-release-windows-x64.patch
 C:\Users\Administrator\.local\bin\omp.exe
 ```
 
-当前维护工作树 `packages/coding-agent/package.json` 标注的 `@oh-my-pi/pi-coding-agent` 版本是 `17.0.6`，合并基线是上游 `89d6a8f6d`。本轮升级尚未执行 native/二进制重型构建或部署；本机安装的 `omp.exe` 于 2026-07-21 验证仍为 `16.3.15`。安装版本必须通过 `omp.exe --version` 实时确认；生成 patch 文件和替换 `omp.exe` 时，以实际源码版本为准。
+当前维护工作树 `packages/coding-agent/package.json` 标注的 `@oh-my-pi/pi-coding-agent` 版本是 `17.0.8`，合并基线是上游 `5e362714f`。本轮升级尚未执行 native/二进制重型构建、部署或发布；本机安装文件不作为源码同步依据。安装版本必须通过 `installation.json` 和 `omp.exe --version` 实时确认；生成 patch 文件和替换 `omp.exe` 时，以实际源码版本为准。
 
 另外，旧工作树 `oh-my-pi` 的 Git 索引当前异常：`git status` 显示大量文件同时为 deleted/untracked，`git ls-files` 对已存在文件返回为空。不要基于该状态直接生成或提交 patch。
 
@@ -260,9 +262,10 @@ cd F:\WebCode\message-nav-rail
 
 ## 当前本地源码改动
 
-已在 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean` 的 `message-nav-rail` 分支把本地补丁迁移到 17.0.6：
+已在 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean` 的 `message-nav-rail` 分支把本地补丁迁移到 17.0.8，并完成合并提交 `813e4db05`：
 
-- 采用 17.0.6 的 native live-region pinning 契约；固定布局从边界 0 开始报告 pinned，避免消息切片和固定输入区进入终端原生 scrollback，不恢复上游已经移除的旧 Transcript 压缩/重放实现。
+- 沿用 17.x 的 native live-region pinning 契约；固定布局从边界 0 开始报告 pinned，避免消息切片和固定输入区进入终端原生 scrollback，不恢复上游已经移除的旧 Transcript 压缩/重放实现。
+- 保留 17.0.8 新增的 settled transcript component 复用和聚焦组件图片粘贴能力，同时保留 entry id 锚点、PageUp/PageDown 和鼠标滚轮路由。
 - 17.x 已删除静态 `legacy-pi-bundled-keys.ts` 和 `legacy-pi-bundled-registry.ts`，改为从 package exports 动态生成虚拟模块；本地补丁不再维护静态 bundled registry。
 - 上游合并后的定向测试覆盖 Transcript 原生模式、固定 viewport 模式、扩展跳转、键盘滚动、鼠标滚动和 session entry id 对齐。
 - Windows/WSL 上会等待 ConPTY 全量重绘后的 150 ms 静默窗口，再断言可能被合并的 trailing render，避免 4 个渲染回归测试读取上一帧。
@@ -275,7 +278,9 @@ cd F:\WebCode\message-nav-rail
   - 避免外层能运行 `bun`，但 `Bun.spawn(["bun", ...])` 报 `ENOENT: uv_spawn 'bun'`
 - `packages/tui/src/tui.ts`
   - 新增主界面 `setMouseTrackingEnabled(enabled)`，让普通 interactive UI 可以接收 SGR mouse wheel
-  - fullscreen overlay 退出后，如果主界面仍需要 mouse tracking，会自动恢复
+  - 主界面只启用 `1000 + 1006` click/wheel reporting，不启用 fullscreen hover 所需的 `1003` any-motion reporting
+  - `start()` 会恢复调用方期望的主界面 tracking，修复 external editor、挂起恢复等 `stop() -> start()` 后滚轮失效
+  - fullscreen overlay 继续使用 `1000 + 1003 + 1006`，退出后恢复主界面模式
 - `packages/coding-agent/src/session/session-context.ts`
   - 给 `SessionContext` 增加与 `messages` 平行的 `messageEntryIds`
   - 保证删除 dangling assistant message 时同步删除对应 entry id
@@ -297,6 +302,7 @@ cd F:\WebCode\message-nav-rail
 - `packages/coding-agent/src/modes/controllers/input-controller.ts`
   - 把 PageUp/PageDown 接入内部 transcript viewport
   - 把 SGR mouse wheel 接入内部 transcript viewport
+  - 编辑器聚焦时消费未使用的 click/release/motion report，避免鼠标序列继续进入 editor
 - `packages/coding-agent/src/modes/utils/ui-helpers.ts`
   - 在历史/恢复渲染时按 `messageEntryIds` 注册用户/助手消息锚点
 - `packages/coding-agent/src/modes/controllers/extension-ui-controller.ts`
@@ -321,6 +327,12 @@ cd F:\WebCode\message-nav-rail
 - `FixedTranscriptLayout` 使用共享 `ScrollView` 在消息区右侧绘制内部滚动条；内容溢出时显示轨道和滑块，不溢出时不显示。
 - 消息内容按扣除滚动条预留列后的宽度重新布局，避免滚动条覆盖最后一列文本，并保证锚点行号、跳转位置与实际换行一致。
 - 内部滚动条用于显示当前位置；当前交互仍通过鼠标滚轮、PageUp/PageDown 和小白点跳转完成，不提供鼠标拖拽滑块。
+
+第四版修正点：
+
+- 主界面鼠标模式从 `1000 + 1003 + 1006` 缩减为 `1000 + 1006`，避免无用指针移动事件进入输入链；fullscreen overlay 保持完整 hover/click/wheel 模式。
+- TUI 在 `start()` 时按持久化期望恢复主界面 mouse tracking，修复 external editor、挂起恢复等生命周期后滚轮失效。
+- 主界面启用 mouse tracking 时，终端原生文本选择使用 `Shift + 拖拽`；标准 SGR 协议无法同时提供无修饰键拖拽选择和应用内部滚轮。
 
 ## 源码定位清单
 
@@ -419,7 +431,7 @@ git apply --check --reverse $patchPath
 
 ```powershell
 cd <oh-my-pi-source>
-$version = "17.0.6" # 必须与目标源码版本一致
+$version = "17.0.8" # 必须与目标源码版本一致
 git apply "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
 ```
 
@@ -437,7 +449,7 @@ Copy-Item <backup-omp.exe> C:\Users\Administrator\.local\bin\omp.exe -Force
 
 ```powershell
 cd <oh-my-pi-source>
-$version = "17.0.6" # 必须与当前补丁版本一致
+$version = "17.0.8" # 必须与当前补丁版本一致
 git apply -R "F:\WebCode\message-nav-rail\patches\oh-my-pi\$version-scroll-to-entry-and-fixed-composer.patch"
 ```
 

@@ -190,8 +190,12 @@ export default function messageNavRail(pi: ExtensionAPI) {
     terminalInputUI = null;
   }
 
-  function replaceStateFromEntries(branch: SessionEntryLike[]): RailMessage[] {
+  function replaceStateFromEntries(
+    branch: SessionEntryLike[],
+    options: { selectNewestAdded?: boolean } = {}
+  ): RailMessage[] {
     const previousIds = new Set(seenEntryIds);
+    const previousMessageCount = state.messages.length;
     const previousSelected = state.selectedIndex >= 0 ? state.messages[state.selectedIndex] : undefined;
     const previousSelectedId = previousSelected?.id;
     const previousSelectedIndex = state.selectedIndex;
@@ -217,23 +221,37 @@ export default function messageNavRail(pi: ExtensionAPI) {
       state = next;
     }
 
+    const newest = state.messages.at(-1);
+    if (
+      options.selectNewestAdded === true &&
+      state.messages.length > previousMessageCount &&
+      newest !== undefined &&
+      addedMessages.some((message) => message.id === newest.id)
+    ) {
+      state = { ...state, selectedIndex: state.messages.length - 1 };
+    }
+
     seenEntryIds.clear();
     rememberMessages(rebuilt.messages);
     return addedMessages;
   }
 
-  function replaceStateFromBranch(ctx: ExtensionContext): RailMessage[] {
-    return replaceStateFromEntries(ctx.sessionManager.getBranch());
+  function replaceStateFromBranch(
+    ctx: ExtensionContext,
+    options?: { selectNewestAdded?: boolean }
+  ): RailMessage[] {
+    return replaceStateFromEntries(ctx.sessionManager.getBranch(), options);
   }
 
   function refreshFromBranch(
     ctx: ExtensionContext,
-    shouldRender = true
+    shouldRender = true,
+    selectNewestAdded = true
   ): { refreshed: boolean; addedMessages: RailMessage[] } {
     try {
       const branch = ctx.sessionManager.getBranch();
       if (branch.length === 0) return { refreshed: false, addedMessages: [] };
-      const addedMessages = replaceStateFromEntries(branch);
+      const addedMessages = replaceStateFromEntries(branch, { selectNewestAdded });
       if (shouldRender) rerender();
       return { refreshed: true, addedMessages };
     } catch (e) {
@@ -242,8 +260,12 @@ export default function messageNavRail(pi: ExtensionAPI) {
     }
   }
 
-  function tryRefreshFromBranch(ctx: ExtensionContext, shouldRender = true): boolean {
-    return refreshFromBranch(ctx, shouldRender).refreshed;
+  function tryRefreshFromBranch(
+    ctx: ExtensionContext,
+    shouldRender = true,
+    selectNewestAdded = true
+  ): boolean {
+    return refreshFromBranch(ctx, shouldRender, selectNewestAdded).refreshed;
   }
 
   function scheduleBranchRefresh(ctx: ExtensionContext) {
@@ -320,7 +342,7 @@ export default function messageNavRail(pi: ExtensionAPI) {
     if (!ctx) return false;
     let targetMessage = state.messages[idx];
     if (!targetMessage) return false;
-    if (tryRefreshFromBranch(ctx, true)) {
+    if (tryRefreshFromBranch(ctx, true, false)) {
       const refreshedIndex = state.selectedIndex >= 0 ? state.selectedIndex : Math.min(idx, state.messages.length - 1);
       targetMessage = state.messages[refreshedIndex];
       if (!targetMessage) return false;

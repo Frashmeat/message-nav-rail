@@ -10,7 +10,7 @@
 
 ## 背景
 
-当前扩展已结合本地 Oh My Pi `17.0.6` 维护源码核对：
+当前扩展已结合 Oh My Pi `17.0.8` 维护源码核对：
 
 - 可用：`pi.on`、`pi.registerShortcut`、`ctx.ui.setWidget`、`ctx.ui.notify`
 - 权威消息来源：`ctx.sessionManager.getBranch()`。扩展用它重建小白点，并用真实 `entry.id` 做跳转锚点。
@@ -209,11 +209,12 @@ patches/
 
 `patches/oh-my-pi/README.md` 记录补丁目标、前置条件、源码定位关键词、应用/回滚流程和验收清单。
 
-注意：Oh My Pi fork 的活跃维护工作树位于 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `17.0.6`，合并基线是稳定标签 `v17.0.6` 的 `89d6a8f6d`；GitHub Action `29836615333` 已完成 native/二进制构建与打包，并发布 `v17.0.6-custom.2` prerelease。本机当前安装清单仍为 `17.0.6-custom.1`，二进制版本为 `omp/17.0.6`；安装版本必须结合 `installation.json` 和 `omp.exe --version` 确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
+注意：Oh My Pi fork 的活跃维护工作树位于 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi-clean`，当前分支是 `message-nav-rail`，`origin` 指向 `https://github.com/Frashmeat/oh-my-pi.git`，`upstream` 指向 `https://github.com/can1357/oh-my-pi.git`。维护源码当前版本是 `17.0.8`，合并基线是稳定标签 `v17.0.8` 的 `5e362714f`，合并提交是 `813e4db05`；未执行 native/二进制构建、部署或发布。已发布的可回退版本仍是 `v17.0.6-custom.2`；本机安装版本不作为本轮源码同步依据，必须结合 `installation.json` 和 `omp.exe --version` 单独确认。旧目录 `F:\WebCode\message-nav-rail\ohmypi\oh-my-pi` 的 Git 索引状态异常，只保留作参考，不再用于提交、生成 patch 或构建。
 
 当前实现状态：
 
-- 已迁移到 Oh My Pi 17.0.6，并使用上游新增的 native live-region pinning 契约；固定布局从边界 0 开始报告 pinned，不恢复上游已经移除的旧 Transcript 压缩/重放实现。
+- 已迁移到 Oh My Pi 17.0.8，并沿用上游 native live-region pinning 契约；固定布局从边界 0 开始报告 pinned，不恢复上游已经移除的旧 Transcript 压缩/重放实现。
+- 迁移保留 17.0.8 的 settled transcript component 复用和聚焦组件图片粘贴能力，没有用本地定制覆盖上游新增行为。
 - 17.x 的 legacy Pi bundled modules 已改为从 package exports 动态生成，本补丁不再修改已删除的静态 registry 文件。
 - 已给扩展 UI context 增加可选 `scrollToEntryId(entryId, options): boolean`。
 - 已给 transcript 渲染增加 `entryId -> Component` 锚点映射。
@@ -223,6 +224,9 @@ patches/
 - 固定布局每次 render 都返回终端高度行数，避免 TUI 根层再用完整 frame 尾部锚定把跳转压回底部。
 - 已接入 PageUp/PageDown 到内部 transcript viewport；编辑器有多行草稿时不抢占编辑器翻页。
 - 已接入 SGR mouse wheel 到内部 transcript viewport；是否生效取决于终端/Oh My Pi TUI 是否向主界面发送 SGR mouse 事件。
+- 主界面只启用 `1000 + 1006` click/wheel reporting，fullscreen overlay 保持 `1000 + 1003 + 1006` hover/click/wheel reporting。
+- TUI 在 `start()` 时恢复期望的主界面 mouse tracking，修复 external editor、挂起恢复等 `stop() -> start()` 后滚轮失效。
+- 编辑器聚焦时会消费未使用的主界面 click/release/motion report；终端原生文本选择使用 `Shift + 拖拽`。
 - 内部 viewport 回到底部后恢复自动尾随，后续新增和流式增长的消息继续可见。
 - 消息内容超过内部 viewport 时显示右侧滚动条，滑块位置与内部行偏移同步；不溢出时自动隐藏。
 - transcript 按扣除滚动条预留列后的宽度重新换行，避免轨道覆盖文本并保持消息锚点位置准确。

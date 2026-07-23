@@ -9,5 +9,6 @@ export function onInput(state: RailState, text: string): RailState {
     timestamp: Date.now(),
     anchorable: false,
   };
-  return { ...state, messages: [...state.messages, msg] };
+  const messages = [...state.messages, msg];
+  return { ...state, messages, selectedIndex: messages.length - 1 };
 }
